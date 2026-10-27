@@ -21,7 +21,7 @@ AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국�
 - 서비스를 배포할 AWS 계정과 배포 권한(CI에서 쓸지, 사용자가 로컬에서 배포할지).
 
 ## 다음 단계 (권장 순서)
-1. 설계 문서를 읽고 구현 계획(`docs/superpowers/plans/`)을 먼저 작성해 사용자 승인을 받는다.
+1. 설계 문서를 읽고 구현 계획(`docs/superpowers/plans/`)을 먼저 작성해 사용자 승인을 받는다. → 초안 작성됨: `docs/superpowers/plans/2026-10-28-aws-gap-check-implementation.md`(결정 D1~D8 승인 대기).
 2. 구현 첫 주에 확인: Gemini 호출 가능 여부, 배포 권한, Prowler를 CodeBuild/Fargate 중 어디서 돌릴지(비용·시간 제한 비교).
 3. IaC(CDK 또는 CloudFormation)로 작성하고, 시크릿은 Secrets Manager로.
 4. 발표 자료용으로 아키텍처 설명과 보안 설계(ExternalId, 최소 권한, 프롬프트 인젝션 방어)를 문서로 남긴다.
