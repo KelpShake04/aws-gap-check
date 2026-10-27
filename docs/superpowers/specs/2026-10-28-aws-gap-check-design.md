@@ -53,7 +53,7 @@
 | API | API Gateway + Lambda |
 | 스캔 실행 | CodeBuild 또는 Fargate에서 Prowler 실행 (EventBridge로 스케줄 가능) |
 | 결과 저장 | S3(원본 리포트), DynamoDB(항목과 해설) |
-| AI 해설 | Lambda에서 Bedrock 호출 |
+| AI 해설 | Lambda에서 Gemini API 호출 (키는 Secrets Manager) |
 | 알림 | SNS (위험도 높음일 때) |
 | 계정 연결 | 사용자 계정에 읽기 전용 IAM Role 생성(CloudFormation 템플릿 제공), `sts:AssumeRole` + 사용자별 `ExternalId` |
 
@@ -62,7 +62,7 @@
 ## 빌더에게 남기는 결정
 
 - 스캔 실행 환경: CodeBuild와 Fargate 중 선택 (비용, 시간 제한, 구현 난이도 비교).
-- Bedrock 모델 세부 선택: 사용자 결정으로 Claude 대신 OpenAI GPT 계열(Bedrock 서버리스)을 쓴다. Anthropic 용도 정보 제출을 피하기 위함. 구체 모델(예: GPT-5.x 중 가볍고 싼 것)과 한국어·JSON 출력 품질은 빌더가 비교해서 정한다. 모델 ID는 환경변수로 빼서 교체 가능하게 한다. 이 계정에서 호출 가능한지, IAM 권한(`bedrock:InvokeModel`)은 구현 첫 주에 확인한다.
+- AI 모델: 사용자 결정으로 Gemini API를 Lambda에서 호출한다(Flash급 우선, Pro는 무료 한도 확인 후). 이 계정에서 Bedrock의 OpenAI GPT-6 Luna는 `AccessDeniedException`(not available for this account)으로 막혀 있음을 콘솔에서 확인했다. Claude는 Anthropic 용도 정보 제출이 필요해 보류했다. API 키는 Secrets Manager 또는 SSM Parameter Store(SecureString)에 두고 코드·레포에 넣지 않는다. 스캔 결과가 Google로 전송되므로 전송 필드를 최소화하고(계정 ID, 리소스 이름 마스킹 검토) 이 점을 발표에서 설명한다. 모델 호출부는 한 함수로 분리해 나중에 Bedrock 모델로 교체할 수 있게 한다.
 - 프런트엔드 프레임워크, 리포트 화면 구성.
 - 점검 범위: Prowler 전체를 돌릴지, 시연용으로 핵심 항목(S3 공개, Security Group, IAM, 암호화 등)만 돌릴지.
 - 팀원별 역할 분담 세부안.
