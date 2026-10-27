@@ -20,8 +20,13 @@ AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국�
 - 평가 기준(IaC 필수 여부, 시연 시간), 비용 상한, 조원 참여 여부.
 - 서비스를 배포할 AWS 계정과 배포 권한(CI에서 쓸지, 사용자가 로컬에서 배포할지).
 
+## 현재 상태 (2026-10-28)
+- 구현 계획 승인됨: `docs/superpowers/plans/2026-10-28-aws-gap-check-implementation.md`(D1~D8 제안대로. CodeBuild, CloudFormation, CloudShell 배포, Gemini에는 메타데이터만, vanilla JS, SSM SecureString, 관리자만 가입, 핵심 check 33개).
+- Phase 0 코드 작성 완료(unittest, cfn-lint 통과): Gemini 호출부 `backend/gapcheck/llm.py`, 고객 Role 템플릿, 스캐너 스택(`infra/service.yaml`), `scanner/run_scan.py`, 배포·스파이크 스크립트, 합성 OCSF fixture.
+- **사용자 실행 대기:** `docs/deploy.md`의 1~4단계(Gemini 스파이크, 스택 배포, 자체 테스트 Role, 테스트 스캔). 결과는 같은 문서의 양식으로 여기에 적는다. 결과를 보고 CodeBuild 확정 여부를 정한 뒤 Phase 1로 간다.
+
 ## 다음 단계 (권장 순서)
-1. 설계 문서를 읽고 구현 계획(`docs/superpowers/plans/`)을 먼저 작성해 사용자 승인을 받는다. → 초안 작성됨: `docs/superpowers/plans/2026-10-28-aws-gap-check-implementation.md`(결정 D1~D8 승인 대기).
+1. 설계 문서를 읽고 구현 계획(`docs/superpowers/plans/`)을 먼저 작성해 사용자 승인을 받는다. → 완료(위 현재 상태).
 2. 구현 첫 주에 확인: Gemini 호출 가능 여부, 배포 권한, Prowler를 CodeBuild/Fargate 중 어디서 돌릴지(비용·시간 제한 비교).
-3. IaC(CDK 또는 CloudFormation)로 작성하고, 시크릿은 Secrets Manager로.
+3. IaC는 CloudFormation(D2), 시크릿은 SSM Parameter Store SecureString(D6, 무료)으로 한다.
 4. 발표 자료용으로 아키텍처 설명과 보안 설계(ExternalId, 최소 권한, 프롬프트 인젝션 방어)를 문서로 남긴다.

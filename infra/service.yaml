@@ -1,0 +1,154 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  aws-gap-check service stack (Phase 0: scan results bucket and Prowler CodeBuild scanner).
+
+# 서비스 계정에 배포한다. scripts/deploy.sh가 ArtifactBucket과 ScannerSourceKey를 채운다.
+# Phase 1부터 Cognito, API, DynamoDB, 웹 호스팅을 이 스택에 추가한다.
+
+Parameters:
+  ArtifactBucket:
+    Type: String
+    Description: deploy.sh가 만든 배포 아티팩트 버킷
+  ScannerSourceKey:
+    Type: String
+    AllowedPattern: "^scanner/scanner-[0-9a-f]{16}\\.zip$"
+    Description: scanner/ zip의 S3 키 (내용 해시가 들어가 내용이 바뀔 때마다 새 키)
+  ProwlerImage:
+    Type: String
+    Default: public.ecr.aws/prowler-cloud/prowler:5.46.0
+    Description: Prowler 공식 이미지 (버전 고정). ECR Public에 태그가 없으면 prowlercloud/prowler:5.46.0
+
+Resources:
+  ResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      # 버전 관리를 켜지 않는다. 결과 삭제가 실제 삭제가 되도록.
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-raw-results
+            Status: Enabled
+            Prefix: raw/
+            ExpirationInDays: 30
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  ResultsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ResultsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt ResultsBucket.Arn
+              - !Sub "${ResultsBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  ScannerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/codebuild/aws-gap-check-scanner
+      RetentionInDays: 14
+
+  ScannerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # 고객 Role 신뢰 정책이 이 이름을 aws:PrincipalArn으로 지정한다. 바꾸면 템플릿도 같이 바꾼다.
+      RoleName: aws-gap-check-scanner-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+            # 서비스 간 confused deputy 방지: 이 계정의 CodeBuild만
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: scanner
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteBuildLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt ScannerLogGroup.Arn
+              - Sid: ReadScannerSource
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${ArtifactBucket}/${ScannerSourceKey}"
+              - Sid: ReadScannerSourceBucketInfo
+                Effect: Allow
+                Action:
+                  - s3:GetBucketAcl
+                  - s3:GetBucketLocation
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${ArtifactBucket}"
+              - Sid: WriteRawResults
+                Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${ResultsBucket.Arn}/raw/*"
+              - Sid: AssumeCustomerReadOnlyRole
+                Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::*:role/AwsGapCheckReadOnlyRole"
+
+  ScannerProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: aws-gap-check-scanner
+      Description: Runs Prowler core checks against a connected account (read-only role)
+      ServiceRole: !GetAtt ScannerRole.Arn
+      Source:
+        Type: S3
+        Location: !Sub "${ArtifactBucket}/${ScannerSourceKey}"
+        BuildSpec: buildspec.yml
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: !Ref ProwlerImage
+        ImagePullCredentialsType: CODEBUILD
+        EnvironmentVariables:
+          - Name: RESULTS_BUCKET
+            Value: !Ref ResultsBucket
+      TimeoutInMinutes: 30
+      QueuedTimeoutInMinutes: 60
+      # 비용 상한 겸 신규 계정 한도 대비. 동시에 한 스캔만 돈다.
+      ConcurrentBuildLimit: 1
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Ref ScannerLogGroup
+
+Outputs:
+  ResultsBucketName:
+    Value: !Ref ResultsBucket
+  ScannerProjectName:
+    Value: !Ref ScannerProject
+  ScannerRoleArn:
+    Value: !GetAtt ScannerRole.Arn

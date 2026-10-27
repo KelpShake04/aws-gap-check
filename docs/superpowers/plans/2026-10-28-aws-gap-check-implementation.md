@@ -1,6 +1,6 @@
 # aws-gap-check 구현 계획
 
-작성일 2026-10-28. 상태: 초안, 사용자 승인 전. 설계: [`docs/superpowers/specs/2026-10-28-aws-gap-check-design.md`](../specs/2026-10-28-aws-gap-check-design.md)
+작성일 2026-10-28. 상태: **승인됨**(2026-10-28, D1~D8 제안대로). Phase 0 코드 작성 완료, 사용자 실행 대기([`docs/deploy.md`](../../deploy.md)). 설계: [`docs/superpowers/specs/2026-10-28-aws-gap-check-design.md`](../specs/2026-10-28-aws-gap-check-design.md)
 
 **목표:** 12월 초 발표에서 "로그인 → 계정 연결(ExternalId) → 스캔 → AI 한국어 해설 리포트" 전 과정을 시연할 수 있는 서버리스 웹 서비스를 11/24까지 만든다. 마지막 주는 안정화와 발표 자료에 쓴다.
 
@@ -60,14 +60,15 @@ Prowler CLI 옵션, OCSF 출력 필드, check ID와 심각도는 PyPI의 `prowle
 ### 2.1 스캔 한 번의 흐름
 
 1. 사용자가 "스캔"을 누르면 ApiFunction이 연결 상태(ACTIVE)와 사용 한도(사용자당 동시 1개, 하루 10회)를 확인하고 `StartBuild`를 호출한다. 환경 변수 override로 `ROLE_ARN`, `EXTERNAL_ID`, `SCAN_ID`, `USER_SUB`를 넘긴다. 스캔 상태는 `QUEUED`.
-2. CodeBuild는 환경 변수를 정규식으로 다시 검증한 뒤 Prowler를 실행한다.
+2. CodeBuild에서 `scanner/run_scan.py`가 환경 변수를 정규식으로 다시 검증한 뒤, 셸을 거치지 않고 인자 목록으로 Prowler를 실행한다.
    ```
    prowler aws --role "$ROLE_ARN" --external-id "$EXTERNAL_ID" \
+     --role-session-name "aws-gap-check-$SCAN_ID" \
      --checks-file core-checks.json --region ap-northeast-2 \
-     -M json-ocsf --ignore-exit-code-3 --no-banner -o out -F prowler
+     -M json-ocsf --ignore-exit-code-3 --no-banner --no-color -o /tmp/prowler-out -F prowler
    ```
-   `--ignore-exit-code-3`이 없으면 FAIL 항목이 하나만 있어도 Prowler가 종료 코드 3을 내고 빌드가 실패로 끝난다.
-3. `upload_result.py`가 `out/prowler.ocsf.json`을 `raw/{sub}/{scanId}/prowler.ocsf.json`에 올린다. 업로드는 CodeBuild 자체 역할로 하고, 고객 계정 자격 증명은 쓰지 않는다.
+   `--ignore-exit-code-3`이 없으면 FAIL 항목이 하나만 있어도 Prowler가 종료 코드 3을 내고 빌드가 실패로 끝난다. 공식 이미지는 root가 아닌 `prowler` 사용자로 돌기 때문에 출력은 `/tmp`에 쓴다.
+3. 같은 스크립트가 `prowler.ocsf.json`을 `raw/{sub}/{scanId}/prowler.ocsf.json`에 올린다. 업로드는 CodeBuild 자체 역할로 하고, 고객 계정 자격 증명은 Prowler 프로세스 안에서만 쓰인다.
 4. EventBridge 규칙이 이 프로젝트의 `IN_PROGRESS`, `SUCCEEDED`, `FAILED`, `STOPPED`, `TIMED_OUT` 이벤트를 ScanFinishedFunction에 넘긴다. 함수는 `BatchGetBuilds`로 빌드의 환경 변수를 읽어 어느 스캔인지 찾는다.
 5. 성공이면 FAIL 항목만 check 단위로 묶어 저장하고(`PROCESSING`), check마다 해설을 붙이고(`EXPLAINING`), 스캔 전체 우선순위 요약을 만든 뒤 `DONE`. 실패면 `FAILED`와 실패한 빌드 단계를 기록한다.
 6. 화면은 `GET /scans/{id}`를 5초 간격으로 조회해 진행 상태를 보여 준다.
@@ -175,7 +176,7 @@ backend/
 scanner/
   buildspec.yml
   core-checks.json         {"aws": [...]} (Prowler --checks-file 형식)
-  upload_result.py
+  run_scan.py              입력 검증 → Prowler 실행(셸 없이) → 결과 업로드
 frontend/
   index.html  app.js  auth.js  api.js  style.css
 tests/
@@ -184,6 +185,7 @@ tests/
 scripts/
   deploy.sh                package → deploy → 프런트 업로드, config.json 생성 → CloudFront 무효화
   spike_gemini.py          SSM에서 키를 읽어 모델 목록과 구조화 출력 1회 확인 (키는 출력하지 않음)
+  start_test_scan.sh       연결 API가 생기기 전 스파이크용 스캔 시작
   sanitize_ocsf.py         실제 결과의 계정 ID, ARN, 리소스 이름을 치환해 fixture로 만듦
   warm_cache.py            핵심 check 해설 미리 생성
 .github/workflows/test.yml unittest + cfn-lint
@@ -201,8 +203,9 @@ scripts/
   - Claude(클라우드 세션): 코드, 템플릿, 테스트, PR. AWS 자격 증명과 Gemini 키는 받지 않는다.
   - 사용자: CloudShell 배포, SSM에 키 저장, 스파이크 실행 후 결과 공유(키, 계정 ID 제외), PR 리뷰와 머지, 비용이 드는 작업 승인.
   - 조원(연락되면): 자기 계정에 `customer-role.yaml` 배포, 취약 리소스 생성과 삭제, 발표 자료 일부(아키텍처 그림, 보안 설계 슬라이드), 리허설. 연락이 안 되면 서비스 계정 안 Role로 대체하고, 같은 계정이라는 점을 발표에서 밝힌다.
-- **브랜치와 PR:** Phase마다 브랜치 1개와 PR 1개(큰 Phase는 나눈다). main 직접 push 금지, 머지는 사용자.
-- **TDD:** `gapcheck/` 로직은 테스트를 먼저 쓰고 실패를 확인한 뒤 구현한다. 실행: `python -m unittest discover -s tests -v`.
+- **브랜치와 PR:** Phase마다 브랜치 1개와 PR 1개(큰 Phase는 나눈다). main 직접 push 금지, 머지는 사용자. 클라우드 세션은 세션에 지정된 브랜치 하나만 쓰므로, 같은 세션에서 이어 작업하면 같은 PR에 쌓인다(예: 계획과 Phase 0이 PR #3 하나).
+- **TDD:** `gapcheck/` 로직은 테스트를 먼저 쓰고 실패를 확인한 뒤 구현한다. 실행: 레포 루트에서 `python -m unittest -v`.
+- **CloudShell 호환:** CloudShell의 python3는 3.9일 수 있어 `scripts/`와 `backend/gapcheck/`는 3.9 문법만 쓴다(`tests/test_python39_syntax.py`가 검사).
 - **"완료" 기준:** 코드 작업은 unittest와 cfn-lint 통과 + PR. 기능 완료는 사용자가 배포해서 각 Phase의 "배포 확인" 항목을 실제로 확인한 뒤다. 확인 결과는 `docs/HANDOFF.md`에 적는다.
 - **실행 전에 사용자 확인이 필요한 AWS 작업:** 스택 첫 배포와 IAM이 크게 바뀌는 업데이트, 스택·버킷 삭제, 취약 리소스 생성, 서비스 한도 상향 요청.
 
@@ -215,7 +218,7 @@ scripts/
 ### Phase 0. 기반과 스파이크 (10/28–11/03)
 
 **T0.1 레포 골격 [Claude, P0]**
-- `.gitignore`(`.env`, `*.pem`, `out/`, `__pycache__/`, `frontend/config.json`), 6장의 디렉터리, `tests/test_smoke.py`, `.github/workflows/test.yml`(Python 3.13, unittest, cfn-lint).
+- `.gitignore`(`.env`, `*.pem`, `out/`, `__pycache__/`, `frontend/config.json`), 6장의 디렉터리, `tests/__init__.py`(경로 설정), `.github/workflows/test.yml`(Python 3.13, unittest, cfn-lint).
 - 확인: CI 통과.
 
 **T0.2 Gemini 스파이크 [Claude 작성 → 사용자 실행, P0]**
@@ -239,7 +242,8 @@ scripts/
 
 **T0.5 스캐너 최소 스택과 Prowler 스파이크 [Claude 작성 → 사용자 배포·실행, P0]**
 - `infra/service.yaml` 1차: 결과 버킷, CodeBuild 프로젝트(이미지 `public.ecr.aws/prowler-cloud/prowler:5.46.0` 고정, 소스는 아티팩트 버킷의 `scanner/` zip, 타임아웃 30분, `general1.small`), scanner 역할, 로그 그룹 14일 보존.
-- `scanner/buildspec.yml`, `scanner/core-checks.json`, `scanner/upload_result.py`. 테스트: 업로드 키 경로 규칙, 빈 파일과 깨진 JSON 거부.
+- `scanner/buildspec.yml`, `scanner/core-checks.json`, `scanner/run_scan.py`. 테스트: 입력 검증(줄바꿈·셸 문자·유니코드 숫자 거부), Prowler 인자 목록, 업로드 키 경로 규칙, 빈 파일과 깨진 JSON 거부.
+- 확인된 사실(2026-10-28): 이미지 태그는 ECR Public과 Docker Hub(`prowlercloud/prowler:5.46.0`) 모두에 있다. 이미지 사용자는 root가 아닌 `prowler`, 실행 파일은 `/home/prowler/.venv/bin/prowler`, 같은 venv에 boto3가 있다. 압축 크기 약 765MB.
 - 사용자: 콘솔에서 환경 변수 override로 빌드 1회 실행.
 - 기록: 이미지 태그 존재 여부와 pull 시간, 스캔 시간, AccessDenied 오류 여부, 결과 크기, 실패 check 수, `--region` 지정 시 IAM 같은 글로벌 서비스 check가 함께 도는지.
 - **전환 기준:** 공식 이미지가 CodeBuild에서 돌지 않고(비 root 사용자, entrypoint 문제 등), 표준 이미지 + `pip install prowler==5.46.0`도 설치에만 5분을 넘기면 Fargate(기본 VPC 공개 서브넷 + 공인 IP, NAT 없음)로 바꾼다. 그 경우 T0.5와 Phase 2를 고쳐 다시 승인받는다.

@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  aws-gap-check read-only scan role. Only the aws-gap-check service's scanner and API
+  roles can assume it, and only with the ExternalId issued to this connection.
+
+# 고객(테스트) 계정에서 실행하는 템플릿. 쓰기 권한은 주지 않는다.
+# Role 이름이 고정이라 콘솔에서 "IAM 리소스 이름 지정(CAPABILITY_NAMED_IAM)" 확인이 필요하다.
+
+Parameters:
+  ServiceAccountId:
+    Type: String
+    AllowedPattern: "^[0-9]{12}$"
+    ConstraintDescription: 12자리 숫자
+    Description: aws-gap-check 서비스 계정 ID (연결 화면에 표시됨)
+  ExternalId:
+    Type: String
+    AllowedPattern: "^agc-[0-9a-f]{32}$"
+    ConstraintDescription: agc- 뒤에 hex 32자리
+    Description: 연결 화면에서 발급받은 ExternalId
+
+Resources:
+  ReadOnlyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: AwsGapCheckReadOnlyRole
+      Description: aws-gap-check read-only security scan (SecurityAudit + ViewOnlyAccess)
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowAwsGapCheckWithExternalId
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:${AWS::Partition}:iam::${ServiceAccountId}:root"
+            Action: sts:AssumeRole
+            Condition:
+              # confused deputy 방지: 서비스가 이 연결에 발급한 값만 통과
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+              # 서비스 계정 안에서도 스캐너와 API 역할만 허용
+              ArnEquals:
+                aws:PrincipalArn:
+                  - !Sub "arn:${AWS::Partition}:iam::${ServiceAccountId}:role/aws-gap-check-scanner-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${ServiceAccountId}:role/aws-gap-check-api-role"
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/SecurityAudit"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/job-function/ViewOnlyAccess"
+
+Outputs:
+  RoleArn:
+    Description: 연결 화면에는 계정 ID만 입력하면 된다 (Role 이름은 고정)
+    Value: !GetAtt ReadOnlyRole.Arn

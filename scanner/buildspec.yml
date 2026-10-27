@@ -1,0 +1,8 @@
+version: 0.2
+
+# 스캔 1회. 입력 검증, Prowler 실행, 결과 업로드는 run_scan.py가 셸을 거치지 않고 처리한다.
+# Prowler 공식 이미지의 venv Python에는 boto3가 들어 있다.
+phases:
+  build:
+    commands:
+      - /home/prowler/.venv/bin/python run_scan.py

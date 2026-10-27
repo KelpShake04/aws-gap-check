@@ -1,0 +1,19 @@
+# 시크릿은 레포에 두지 않는다 (키는 SSM SecureString으로만)
+.env
+.env.*
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 빌드·배포 산출물
+out/
+build/
+packaged*.yaml
+
+# 배포 때 스택 출력으로 생성
+frontend/config.json
