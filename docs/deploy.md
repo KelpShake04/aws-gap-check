@@ -1,6 +1,6 @@
-# 배포와 스파이크 실행 가이드
+# 배포와 실행 가이드
 
-사용자가 서비스 계정 콘솔의 **CloudShell**에서 직접 실행하는 명령을 모았다. Claude 세션은 AWS 자격 증명과 Gemini 키를 받지 않으므로 이 단계들은 대신 실행할 수 없다. 결과는 맨 아래 양식대로 `docs/HANDOFF.md`에 적거나 대화에 붙여 넣는다. **API 키, 액세스 키, 계정 ID는 붙여 넣지 않는다.**
+사용자가 서비스 계정 콘솔의 **CloudShell**에서 직접 실행하는 명령을 모았다. Claude 세션은 AWS 자격 증명과 Gemini 키를 받지 않으므로 이 단계들은 대신 실행할 수 없다. 결과는 맨 아래 양식대로 `docs/HANDOFF.md`에 적거나 대화에 붙여 넣는다. **API 키, 비밀번호, 계정 ID는 붙여 넣지 않는다.**
 
 ## 0. 준비
 
@@ -10,16 +10,10 @@
    aws sts get-caller-identity --query Arn --output text   # ...:root 이면 안 된다
    python3 --version
    ```
-3. 코드 가져오기. PR이 머지되기 전에는 PR 브랜치를 쓴다.
-   - 레포가 공개면:
-     ```bash
-     git clone -b claude/jolly-cori-omuqsi https://github.com/KelpShake04/aws-gap-check.git
-     cd aws-gap-check
-     ```
-   - 비공개면: GitHub 웹에서 브랜치를 고르고 **Code → Download ZIP**으로 받은 뒤, CloudShell **Actions → Upload file**로 올려 `unzip`한다. 이 방식은 토큰이 필요 없다.
-4. Service Quotas 콘솔에서 CodeBuild의 동시 실행 빌드 한도를 확인한다(T0.3). 1 이상이면 된다.
+3. 코드 가져오기. PR이 머지되기 전에는 PR 브랜치를 쓴다. 레포가 비공개라 GitHub 웹에서 브랜치를 고르고 **Code → Download ZIP**으로 받은 뒤, CloudShell **Actions → Upload file**로 올려 `unzip`한다(토큰이 필요 없다).
+4. Service Quotas 콘솔에서 CodeBuild의 동시 실행 빌드 한도를 확인한다. 1 이상이면 된다.
 
-## 1. Gemini 스파이크 (T0.2)
+## 1. Gemini 키 저장과 스파이크
 
 1. [Google AI Studio](https://aistudio.google.com/)에서 API 키를 만든다.
 2. 키가 화면과 셸 히스토리에 남지 않게 SSM SecureString으로 저장한다(무료, KMS는 AWS 관리형 `aws/ssm`).
@@ -30,98 +24,83 @@
    unset GEMINI_KEY
    ```
    키를 바꿀 때는 `--overwrite`를 붙인다.
-3. 실행:
-   ```bash
-   python3 scripts/spike_gemini.py
-   ```
-   쓸 수 있는 Flash 모델 목록, 호출한 모델, 응답 시간, 한국어 해설 JSON, 형식 확인 결과가 나온다. 키는 출력되지 않는다.
-4. `HTTP 400`이 나오고 메시지에 `responseJsonSchema`가 언급되면 그 메시지를 그대로 알려 준다(스키마 필드 이름을 바꿔야 한다).
-5. AI Studio의 사용량 화면에서 이 모델의 RPM/RPD 한도를 확인한다.
+3. `python3 scripts/spike_gemini.py` → 쓸 수 있는 Flash 모델, 응답 시간, 한국어 해설 JSON이 나온다. 마지막 줄의 `GEMINI_MODEL=...` 값을 2단계에서 쓴다.
+4. `HTTP 400`이 나오고 메시지에 `responseJsonSchema`가 언급되면 메시지를 그대로 알려 준다.
 
-## 2. 서비스 스택 배포 (T0.5)
+## 2. 배포
 
 ```bash
-scripts/deploy.sh
+GEMINI_MODEL=<1단계에서 나온 모델> scripts/deploy.sh
 ```
 
 - 배포 주체, 리전, 스택 이름을 보여 주고 `y`를 입력해야 진행한다. root면 거부한다.
-- 처음 실행하면 아티팩트 버킷(`aws-gap-check-artifacts-<계정>-ap-northeast-2`, 퍼블릭 차단·암호화)을 만든다.
-- 만드는 리소스: 결과 버킷(30일 후 자동 삭제), CodeBuild 프로젝트 `aws-gap-check-scanner`(동시 1개, 30분 제한), `aws-gap-check-scanner-role`, 로그 그룹(14일 보존). 상시 비용이 드는 리소스는 없다.
-- 끝나면 출력 표에 `ResultsBucketName`이 나온다.
+- 만드는 것: 웹(S3 + CloudFront), Cognito, HTTP API + Lambda 2개, DynamoDB, 결과 버킷, CodeBuild 스캐너, EventBridge 규칙, 로그 그룹(14일). 상시 비용이 드는 리소스는 없다(NAT, EC2 없음).
+- 처음 배포는 CloudFront 때문에 10분 안팎 걸린다. 끝나면 웹사이트 주소가 나온다.
+- `GEMINI_MODEL`은 한 번 넣으면 스택이 기억한다. 비워 두면 AI 해설 없이 Prowler 원문만 보여 준다.
 
-## 3. 자체 테스트용 고객 Role (T0.4)
+## 3. 로그인 사용자 만들기
 
-조원 계정 대신 서비스 계정 자신을 스캔 대상으로 쓴다.
+셀프 가입은 꺼져 있다. 팀원마다:
 
 ```bash
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-EXTERNAL_ID=$(python3 -c "import secrets; print('agc-' + secrets.token_hex(16))")
-echo "$EXTERNAL_ID"     # 4단계에서 다시 쓴다
-
-aws cloudformation deploy --stack-name aws-gap-check-readonly-role \
-  --template-file infra/customer-role.yaml --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides ServiceAccountId="$ACCOUNT_ID" ExternalId="$EXTERNAL_ID"
+scripts/create_user.sh <이메일>
 ```
 
-`AwsGapCheckReadOnlyRole`이 생긴다(`SecurityAudit` + `ViewOnlyAccess`, 쓰기 권한 없음). 같은 계정에는 이 Role을 하나만 만들 수 있다.
+임시 비밀번호가 메일로 간다. 웹사이트에서 로그인하면 새 비밀번호를 정하게 한다. confused deputy 시연을 하려면 사용자를 2명 만든다.
 
-## 4. 테스트 스캔 (T0.5)
+## 4. 계정 연결
+
+웹사이트 **계정 연결 → 새 연결 만들기**를 누르면 템플릿 다운로드 링크와 `ServiceAccountId`, `ExternalId`가 나온다.
+
+- **조원 계정:** 조원이 자기 계정 콘솔에서 템플릿을 업로드해 스택을 만든다(스택 이름 `aws-gap-check-readonly-role`, IAM 확인란 체크). 끝나면 웹에서 그 계정 ID로 **검증**한다.
+- **조원 계정이 없으면(대체 경로):** 서비스 계정 자신에 같은 템플릿을 배포하고 서비스 계정 ID로 검증한다. 이 경우 같은 계정이라는 점을 발표에서 밝힌다.
+- 같은 계정에는 이 Role을 하나만 만들 수 있다. 다른 연결의 ExternalId로 바꾸려면 스택 파라미터를 업데이트한다.
+
+## 5. 스캔과 리포트
+
+**스캔 → 스캔 시작**. 상태가 대기 중 → 스캔 중 → 결과 처리 중 → AI 해설 중 → 완료로 바뀐다. 리포트 화면에서 AI 우선순위, 항목별 해설, 영향받는 리소스를 본다.
+
+진행 상황과 문제는 로그로 확인한다.
 
 ```bash
-scripts/start_test_scan.sh "$ACCOUNT_ID" "$EXTERNAL_ID"
-aws logs tail /aws/codebuild/aws-gap-check-scanner --follow     # Ctrl+C로 종료
+aws logs tail /aws/codebuild/aws-gap-check-scanner --since 30m
+aws logs tail /aws-gap-check/scan-finished --since 30m
+aws logs tail /aws-gap-check/api --since 30m
 ```
 
-끝나면(보통 수 분) 단계별 시간과 결과를 확인한다. `PROVISIONING` 시간에 이미지 pull이 들어가고, `BUILD` 시간이 Prowler 스캔 시간이다.
+## 6. 측정(첫 스캔 후 기록)
 
 ```bash
-BUILD_ID=<시작할 때 출력된 빌드 ID>
+BUILD_ID=$(aws codebuild list-builds-for-project --project-name aws-gap-check-scanner --query 'ids[0]' --output text)
 aws codebuild batch-get-builds --ids "$BUILD_ID" \
   --query 'builds[0].[buildStatus, phases[].[phaseType, durationInSeconds]]' --output json
 aws logs filter-log-events --log-group-name /aws/codebuild/aws-gap-check-scanner \
   --filter-pattern AccessDenied --query 'length(events)'
 ```
 
-결과 파일을 받아 요약한다. `<버킷>`은 2단계 출력의 `ResultsBucketName`, `<결과 키>`는 시작할 때 출력된 값이다.
+`PROVISIONING`은 이미지 내려받기, `BUILD`는 Prowler 스캔 시간이다. 웹을 거치지 않고 빌드만 돌려 보려면 `scripts/start_test_scan.sh <계정 ID> <ExternalId>`를 쓴다(이때는 웹에 결과가 나오지 않는다).
 
-```bash
-mkdir -p out
-aws s3 cp "s3://<버킷>/<결과 키>" out/prowler.ocsf.json
-python3 - <<'EOF'
-import collections, json
-findings = json.load(open("out/prowler.ocsf.json"))
-print("finding:", len(findings))
-print("상태:", dict(collections.Counter(f["status_code"] for f in findings)))
-checks = {f["metadata"]["event_code"] for f in findings}
-print("실행된 check:", len(checks), "/ IAM check 포함:", any(c.startswith("iam_") for c in checks))
-EOF
-```
-
-**ExternalId가 틀리면 막히는지**도 한 번 확인한다(발표 자료용). 다른 값으로 시작하면 빌드가 `FAILED`여야 한다.
-
-```bash
-scripts/start_test_scan.sh "$ACCOUNT_ID" "agc-$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
-```
-
-### 문제가 생기면
-
-- `PROVISIONING`에서 이미지를 못 받으면 Docker Hub 이미지로 다시 배포한다: `PROWLER_IMAGE=prowlercloud/prowler:5.46.0 scripts/deploy.sh`
-- `BUILD`에서 권한이나 사용자 문제(이미지 사용자가 root가 아님)로 실패하면 `aws logs tail` 출력의 오류 줄을 알려 준다. 계획의 전환 기준에 따라 표준 이미지나 Fargate로 바꿀지 정한다.
-- 실제 결과를 테스트 fixture로 쓰려면 익명화한 뒤 내용을 직접 확인하고 공유한다.
-  ```bash
-  python3 scripts/sanitize_ocsf.py out/prowler.ocsf.json out/sanitized.json
-  ```
-
-## 5. 기록 양식
+## 7. 기록 양식
 
 ```
-## Phase 0 스파이크 결과 (YYYY-MM-DD)
+## 배포·스파이크 결과 (YYYY-MM-DD)
 - Gemini: 모델=, responseJsonSchema 동작=예/아니오, 응답 시간=초, 한국어 품질=, 한도(RPM/RPD)=
-- 배포: 주체 종류(IAM 사용자/Role), CodeBuild 동시 실행 한도=
-- CodeBuild: 이미지=, PROVISIONING=초, BUILD=초, finding=건(FAIL=건), 실행된 check=개, AccessDenied=건, IAM check 포함=예/아니오
-- ExternalId 틀린 스캔: FAILED 확인=예/아니오
+- 배포: 주체 종류(IAM 사용자/Role), 소요 시간=분, 오류=
+- CodeBuild: PROVISIONING=초, BUILD=초, 실패 check=개, AccessDenied=건
+- 처리: 스캔 시작부터 완료까지=분, AI 해설 성공=개/전체, 폴백=개
+- confused deputy: 다른 사용자가 같은 계정 ID로 검증 → 실패 확인=예/아니오
 ```
+
+## 문제가 생기면
+
+| 증상 | 확인·조치 |
+|---|---|
+| 배포가 `CognitoDomainPrefix` 관련으로 실패 | 도메인 접두사 충돌. `deploy.sh`의 `COGNITO_PREFIX` 계산에 문자를 덧붙여 다시 배포 |
+| `PROVISIONING` 실패 | `PROWLER_IMAGE=prowlercloud/prowler:5.46.0 scripts/deploy.sh`로 Docker Hub 이미지 사용 |
+| `BUILD` 실패 | CodeBuild 로그의 오류 줄을 알려 준다. Role 삭제·ExternalId 불일치면 연결을 다시 검증 |
+| 리포트가 "Prowler 원문"만 표시 | `GEMINI_MODEL` 설정, SSM 키, `/aws-gap-check/scan-finished` 로그의 `Gemini key unavailable` 확인 |
+| 로그인 후 빈 화면 | 브라우저 개발자 도구 콘솔 오류와 `config.json` 내용 확인 |
 
 ## 정리
 
-Phase 1에서도 같은 스택을 계속 쓰므로 지금은 지우지 않는다. 지울 때는 결과 버킷을 비운 뒤 `aws cloudformation delete-stack`으로 `aws-gap-check-readonly-role`, `aws-gap-check` 순서로 삭제하고, 아티팩트 버킷은 직접 비우고 삭제한다. 삭제는 사용자가 결정한다.
+발표 전까지는 지우지 않는다. 지울 때의 순서와 명령은 `docs/demo-runbook.md`의 "발표 후 정리"에 있다. 삭제는 사용자가 결정한다.

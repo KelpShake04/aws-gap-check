@@ -21,10 +21,12 @@ AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국�
 - 서비스를 배포할 AWS 계정과 배포 권한(CI에서 쓸지, 사용자가 로컬에서 배포할지).
 
 ## 현재 상태 (2026-10-28)
-- 구현 계획 승인됨: `docs/superpowers/plans/2026-10-28-aws-gap-check-implementation.md`(D1~D8 제안대로. CodeBuild, CloudFormation, CloudShell 배포, Gemini에는 메타데이터만, vanilla JS, SSM SecureString, 관리자만 가입, 핵심 check 33개).
-- Phase 0 코드 작성 완료(unittest, cfn-lint 통과): Gemini 호출부 `backend/gapcheck/llm.py`, 고객 Role 템플릿, 스캐너 스택(`infra/service.yaml`), `scanner/run_scan.py`, 배포·스파이크 스크립트, 합성 OCSF fixture.
-- GitHub Actions: 비공개 레포라 무료 시간이 있는데 이번 달 시간을 다 써서 CI job이 시작되지 않는다(runner 미배정). 시간이 다시 생길 때까지 PR의 CI는 실패로 표시되며, 그동안은 push 전에 로컬에서 `python -m unittest`와 `cfn-lint infra/*.yaml`로 확인한다. 워크플로는 시간을 아끼도록 job 1개, 문서만 바뀐 push 제외, 이전 실행 취소로 줄였다.
-- **사용자 실행 대기:** `docs/deploy.md`의 1~4단계(Gemini 스파이크, 스택 배포, 자체 테스트 Role, 테스트 스캔). 결과는 같은 문서의 양식으로 여기에 적는다. 결과를 보고 CodeBuild 확정 여부를 정한 뒤 Phase 1로 간다.
+- 구현 계획 승인됨: `docs/superpowers/plans/2026-10-28-aws-gap-check-implementation.md`(D1~D8 제안대로).
+- **배포 직전까지 코드 완성**(PR #3): 백엔드(`backend/gapcheck`, `backend/handlers`), 전체 스택 템플릿(`infra/service.yaml`, cfn-lint 통과), 고객 Role 템플릿, 스캐너, 프런트엔드(`frontend/`, Chromium 렌더링 확인), 배포·사용자 생성 스크립트, 발표 문서(`docs/architecture.md`, `docs/security-design.md`, `docs/demo-runbook.md`). unittest 전체 통과.
+- **아직 실제 AWS에서 확인한 것은 없다.** 다음은 사용자가 `docs/deploy.md` 1~6단계를 실행하고 7단계 양식으로 결과를 남기는 것. 문제가 나오면 로그를 들고 다음 세션에서 고친다.
+- 계획에서 뺀 것: SNS 알림(P2), `warm_cache.py`(발표 전 사전 스캔이 캐시를 채우므로 불필요).
+- GitHub Actions: 비공개 레포 무료 시간을 다 써서 CI job이 시작되지 않는다. 시간이 다시 생길 때까지 push 전에 로컬에서 `python -m unittest`와 `cfn-lint infra/*.yaml`로 확인한다.
+- 크레딧(사용자 언급): 남은 크레딧이 적다. AWS 예상 비용은 월 $1~2이며 상시 과금 리소스는 없다.
 
 ## 다음 단계 (권장 순서)
 1. 설계 문서를 읽고 구현 계획(`docs/superpowers/plans/`)을 먼저 작성해 사용자 승인을 받는다. → 완료(위 현재 상태).

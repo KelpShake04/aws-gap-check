@@ -1,6 +1,6 @@
 # aws-gap-check 구현 계획
 
-작성일 2026-10-28. 상태: **승인됨**(2026-10-28, D1~D8 제안대로). Phase 0 코드 작성 완료, 사용자 실행 대기([`docs/deploy.md`](../../deploy.md)). 설계: [`docs/superpowers/specs/2026-10-28-aws-gap-check-design.md`](../specs/2026-10-28-aws-gap-check-design.md)
+작성일 2026-10-28. 상태: **승인됨**(2026-10-28, D1~D8 제안대로). Phase 0~5 코드·문서 작성 완료(배포 직전까지), 실제 배포와 확인은 사용자 실행 대기([`docs/deploy.md`](../../deploy.md)). SNS 알림(T4.3)과 `warm_cache.py`는 뺐다(사전 스캔이 캐시를 채움). 설계: [`docs/superpowers/specs/2026-10-28-aws-gap-check-design.md`](../specs/2026-10-28-aws-gap-check-design.md)
 
 **목표:** 12월 초 발표에서 "로그인 → 계정 연결(ExternalId) → 스캔 → AI 한국어 해설 리포트" 전 과정을 시연할 수 있는 서버리스 웹 서비스를 11/24까지 만든다. 마지막 주는 안정화와 발표 자료에 쓴다.
 
