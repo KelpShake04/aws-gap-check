@@ -42,11 +42,11 @@
                        ├─ caddy 컨테이너: 443 TLS 종료(Let's Encrypt HTTP-01, <이름>.duckdns.org 도메인)
                        └─ app 컨테이너 (Prowler 공식 이미지 기반)
                             ├─ HTTP 서버: 정적 화면 + /api/*
-                            ├─ SQLite (/data 볼륨): 사용자, 세션, 연결, 스캔, 결과, 해설 캐시
+                            ├─ MySQL 8.4 컨테이너 (/var/lib/mysql 볼륨): 사용자, 세션, 연결, 스캔, 결과, 해설 캐시
                             ├─ 스캔 작업자 스레드: 큐에서 하나씩 꺼내 Prowler 실행(동시 1개)
                             │     └─ 인스턴스 Role로 sts:AssumeRole + ExternalId
                             │           ──> [고객 계정] AwsGapCheckReadOnlyRole
-                            └─ 결과 파싱 → Gemini 해설(기존 explain.py) → SQLite 저장
+                            └─ 결과 파싱 → Gemini 해설(기존 explain.py) → MySQL 저장
 ```
 
 | 지금 | 바뀐 뒤 | 판단 |
@@ -54,7 +54,7 @@
 | S3 + CloudFront (웹) | app 컨테이너가 정적 파일 제공 | 제 판단 |
 | Cognito (PKCE) | 앱 자체 로그인: 이메일+비밀번호, `hashlib.scrypt` 해시, HttpOnly·Secure·SameSite=Strict 세션 쿠키, 로그인 시도 제한 | 제 판단 |
 | API Gateway + Lambda 2개 | 표준 라이브러리 `http.server`(ThreadingHTTPServer) 하나 | 제 판단, 새 의존성 없음 |
-| DynamoDB | SQLite(`/data/app.db`), 모든 쿼리에 사용자 ID 조건 | 제 판단 |
+| DynamoDB | MySQL 8.4 컨테이너(수업에서 쓴 RDS와 같은 버전), 모든 쿼리에 사용자 ID 조건 | 사용자 결정(2026-10-29) |
 | CodeBuild + EventBridge | 컨테이너 안 작업자 스레드 + `subprocess`(셸 없이 인자 목록) | 제 판단 |
 | 결과 S3 버킷 | `/data/raw/{user}/{scan}/`, 30일 지나면 시작 시·하루 1회 정리 | 제 판단 |
 | SSM SecureString (Gemini 키) | 그대로 유지. 인스턴스 Role로 읽는다 | 제 판단 |
@@ -62,7 +62,7 @@
 
 ## 그대로 쓰는 코드
 
-`backend/gapcheck/`의 `connections`, `scans`(한도·DELETED 표시 포함), `findings`, `explain`, `llm`, `validate`, `ids`, 그리고 `scanner/run_scan.py`의 입력 검증·Prowler 인자 구성, `frontend/`의 화면(`textContent`만 쓰는 원칙)과 기존 테스트. 바뀌는 것은 저장소 계층(`store.py` → SQLite 구현), 진입점(Lambda 핸들러 → HTTP 서버), 로그인(`auth.js`), 인프라 템플릿이다.
+`backend/gapcheck/`의 `connections`, `scans`(한도·DELETED 표시 포함), `findings`, `explain`, `llm`, `validate`, `ids`, 그리고 `scanner/run_scan.py`의 입력 검증·Prowler 인자 구성, `frontend/`의 화면(`textContent`만 쓰는 원칙)과 기존 테스트. 바뀌는 것은 저장소 계층(`store.py` → MySQL 구현), 진입점(Lambda 핸들러 → HTTP 서버), 로그인(`auth.js`), 인프라 템플릿이다.
 
 ## IAM과 계정 연결
 
@@ -100,7 +100,7 @@
 
 - VPC: 템플릿이 전용 VPC(퍼블릭 서브넷 1개, 인터넷 게이트웨이)를 직접 만든다. NAT는 없다. 조원 계정에 기본 VPC가 없거나 삭제돼 있어도 스택이 실패하지 않게 하기 위해서다. 파라미터는 늘리지 않는다.
 - 이미지: EC2 안에서 빌드한다. 기반 이미지는 `public.ecr.aws/prowler-cloud/prowler:<고정 버전>`(Docker Hub 요청 한도와 무관)이고, 앱 코드는 그 위에 복사만 해서 빌드가 가볍다. 루트 EBS는 30GB gp3(암호화). user data는 git 태그(또는 커밋 SHA)를 파라미터 기본값으로 고정해 clone한다. 레포가 공개라 나중에 GHCR 공개 이미지로 바꾸기 쉽다.
-- 재시작: Elastic IP 대신 부팅 때마다 systemd 서비스가 DuckDNS에 새 공인 IP를 등록한다(DNS 반영까지 1분 안팎). 주소 `<이름>.duckdns.org`와 인증서(caddy 볼륨)는 그대로 유지된다. Docker는 systemd로 부팅 시 켜지고, 컨테이너는 `restart: unless-stopped`로 자동 기동한다. 인증서와 SQLite는 볼륨에 둬서 재시작 후에도 남는다.
+- 재시작: Elastic IP 대신 부팅 때마다 systemd 서비스가 DuckDNS에 새 공인 IP를 등록한다(DNS 반영까지 1분 안팎). 주소 `<이름>.duckdns.org`와 인증서(caddy 볼륨)는 그대로 유지된다. Docker는 systemd로 부팅 시 켜지고, 컨테이너는 `restart: unless-stopped`로 자동 기동한다. 인증서와 MySQL 데이터는 볼륨에 둬서 재시작 후에도 남는다.
 
 ## 교수님 과제 공지 반영 (2026-10-29)
 
@@ -118,13 +118,13 @@
 | 팀 역할 (10) | 역할표를 `docs/ROLES.md`에 쓰고 발표 마지막에 역할 슬라이드를 넣는다. 조원이 만든 장표·영상·문서가 참여 근거가 된다(GitHub 이력에 의존하지 않는다) | `docs/ROLES.md`, 역할 슬라이드 | 사용자 정리 |
 | 가점 (10) | 사용자의 GitHub 이력(커밋·PR), GitHub Actions CI(공개 레포라 무료), 선택으로 CD. 조원 참여와 별개로 받는다 | 워크플로 파일 | 사용자 |
 
-DBMS와 ERD가 평가 항목에 명시돼 있다. **결정(사용자, 2026-10-29): 10주차 수업에서 쓰는 DBMS가 있으면 그것을 따르고(MySQL/MariaDB 가능성), 없으면 PostgreSQL 컨테이너를 쓴다.** PostgreSQL을 기본으로 한 이유는 평가표의 DBMS·ERD 항목, EC2 1대 제약(`docker compose`에 서비스 하나 추가, RDS는 상시 과금), 앱 전용 DB 계정과 외래키로 사용자 격리를 설명할 수 있다는 점이다. 저장소 접근은 `store.py`의 한 인터페이스 뒤에 두어 구현이 DBMS 결정을 기다리지 않게 하고, 시간이 부족하면 SQLite로 시작해 나중에 바꾼다. PostgreSQL 드라이버(`psycopg` 등)는 표준 라이브러리에 없어 의존성 하나가 늘어나며, 이 경우만 정당한 예외로 둔다. 어느 쪽이든 ERD는 그린다.
+DBMS와 ERD가 평가 항목에 명시돼 있다. **결정(사용자, 2026-10-29): MySQL 8.4 컨테이너.** 10주차 수업은 DBMS를 가르치지 않고 자원 삭제만 다룬다고 확인했고, 수업 실습에서 이미 쓴 RDS가 MySQL 8.4라서 "배운 내용 적용"으로 설명할 수 있다. EC2 1대 제약 때문에 RDS 대신 `docker compose`에 `mysql` 서비스를 추가하고, 앱 전용 DB 계정(필요한 권한만)과 `user_id` 조건·외래키로 사용자 격리를 설명한다. 저장소 접근은 `store.py`의 한 인터페이스 뒤에 두고 기존 `Store`의 메서드 이름을 유지한다. 순수 Python MySQL 드라이버(`PyMySQL` 등)는 표준 라이브러리에 없어 의존성 하나가 늘어나며, 이 경우만 정당한 예외로 둔다. ERD는 `docs/`에 그린다.
 
 ### 일정 (구현은 11주차 시작)
 
 | 주차 | 기간(추정) | 할 일 |
 |---|---|---|
-| 9~10 | ~11/6 | 설계 확정, 조원 역할 공유(카톡), 10주차 수업(게시판 배포) 확인 후 DBMS 결정, 장표 뼈대 |
+| 9~10 | ~11/6 | 설계 확정, 조원 역할 공유(카톡), 컨테이너 구현 계획서 작성, 장표 뼈대(10주차는 자원 삭제 수업이라 구현 선행 확인 항목 없음) |
 | 11 | 11/9~ | MVP 구현: 로그인, 계정 연결, 스캔, 해설 (로컬 `docker compose`까지) |
 | 12 | 11/16~ | EC2 배포(CloudFormation), HTTPS, DB 확정, CI 추가, 조원 계정 연결 시연 |
 | 13 | 11/23~ | 시연 리허설, 시연 영상 촬영, 장표 완성, 제출 소스 정리, 최종 점검 |
@@ -141,9 +141,9 @@ DBMS와 ERD가 평가 항목에 명시돼 있다. **결정(사용자, 2026-10-29
 
 1. **범위를 MVP와 확장으로 나눈다.** 구현자가 한 명이라 MVP를 먼저 끝낸다.
    - MVP: 이메일 로그인, 계정 연결 검증(ExternalId), 스캔 1회(핵심 점검 항목), 결과 목록, Gemini 해설(실패 시 Prowler 원문), 삭제, 일일 한도.
-   - 확장(시간이 남으면): 우선순위 요약, GitHub Actions 배포(CD), PostgreSQL 전환, 해설 캐시, 사용자 생성 CLI 개선.
+   - 확장(시간이 남으면): 우선순위 요약, GitHub Actions 배포(CD), 해설 캐시, 사용자 생성 CLI 개선.
 2. **시연 실패에 대비한 3단계 대체 경로.** (a) EC2의 HTTPS 주소 (b) 로컬 `docker compose up` (c) 사전 녹화 영상. 사전 스캔 결과(`tests/fixtures/ocsf-sample.json`, `scripts/sanitize_ocsf.py`)로 Prowler 없이도 해설 화면을 보여 준다.
-3. **저장소 접근을 한 인터페이스로 고정**해 DBMS 결정을 늦춰도 구현이 막히지 않게 한다. 기존 `Store`의 메서드 이름을 유지하고 SQLite 구현을 먼저 만든다.
+3. **저장소 접근을 한 인터페이스로 고정**해 테스트에서는 가짜 저장소를 쓰고 운영에서는 MySQL을 쓴다. 기존 `Store`의 메서드 이름을 유지해 기존 테스트를 재사용한다.
 4. **CI를 먼저 붙인다(가점).** 공개 레포는 GitHub Actions가 무료다. PR마다 `python -m unittest`, `cfn-lint infra/ec2.yaml`, `docker build`를 돌린다. CD는 확장 항목으로, 하려면 GitHub OIDC로 SSM `SendCommand`를 호출하고 장기 키는 두지 않는다.
 5. **컨테이너 보안 기본값.** app은 비루트 사용자로 실행, `docker.sock`은 마운트하지 않음, `/data`만 쓰기 가능한 볼륨, 포트는 caddy만 공개, 이미지·Prowler 버전 고정. IMDS hop limit 2라서 컨테이너가 인스턴스 Role을 쓸 수 있다는 점을 위험으로 기록하고, 앱은 외부 URL을 서버에서 요청하는 기능을 두지 않아 SSRF 표면을 없앤다.
 6. **서버리스 구현은 남겨 둔다.** main의 서버리스 코드와 `infra/service.yaml`은 지우지 않고 `legacy/`로 옮길지 빌더가 정한다. "서버리스에서 컨테이너로 바꾼 이유"를 발표 교훈으로 쓴다.
@@ -162,13 +162,13 @@ DBMS와 ERD가 평가 항목에 명시돼 있다. **결정(사용자, 2026-10-29
 
 ## 빌더에게 남기는 결정
 
-- HTTP 서버의 라우팅 구조, SQLite 스키마 세부, 작업자 스레드 구현.
+- HTTP 서버의 라우팅 구조, MySQL 스키마 세부(문자셋 utf8mb4, 인덱스), 작업자 스레드 구현.
 - caddy 대신 앱이 직접 TLS를 처리할지(의존성·인증서 갱신 부담 비교).
 - 기존 서버리스 템플릿(`infra/service.yaml`)과 Lambda 핸들러를 지울지, `legacy/`로 옮겨 남길지.
 
 ## 미정 (사용자 확인 필요)
 
 - 제출 마감일(공지에 비어 있음).
-- DBMS: 결정됨(수업 DBMS 우선, 없으면 PostgreSQL). 10주차 수업에서 쓰는 DBMS만 확인하면 된다.
+- DBMS: 결정됨(MySQL 8.4 컨테이너).
 - DuckDNS 계정 가입(소셜 로그인, 사용자 직접)과 서브도메인 이름 정하기. 토큰은 SSM에 직접 저장한다.
 - 배포 담당과 배포 계정(구현은 사용자 전담, 배포는 역할 분담 후 결정).
