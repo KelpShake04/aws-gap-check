@@ -17,7 +17,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 MAX_RESULT_BYTES = 50 * 1024 * 1024
-FINAL_STATUSES = ("DONE", "FAILED")
+FINAL_STATUSES = ("DONE", "FAILED", "DELETED")
 PHASE_MESSAGES = {
     "PROVISIONING": "스캔 환경을 준비하지 못했습니다(이미지 내려받기 실패 등).",
     "DOWNLOAD_SOURCE": "스캔 스크립트를 내려받지 못했습니다.",
@@ -63,6 +63,10 @@ def handle(event: dict, deps: Deps, remaining_ms: Callable) -> str:
         message = PHASE_MESSAGES.get(phase, "스캔이 끝나지 못했습니다.")
         _update(deps, sub, scan_id, status="FAILED", error=f"{message} ({status} {phase})".strip())
         return "failed"
+    # EventBridge는 같은 이벤트를 두 번 줄 수 있다. 상태를 먼저 조건부로 잡은 호출만 처리한다.
+    if not deps.store.claim_scan(sub, scan_id, ("QUEUED", "RUNNING"),
+                                 {"status": "PROCESSING", "updatedAt": iso(deps.now())}):
+        return "ignored"
     try:
         _process(deps, sub, scan, remaining_ms)
     except Exception:

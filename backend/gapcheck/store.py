@@ -49,9 +49,9 @@ class Store:
     def update_scan(self, sub: str, scan_id: str, fields: dict) -> bool:
         return self._update(f"USER#{sub}", f"SCAN#{scan_id}", fields)
 
-    def delete_scan(self, sub: str, scan_id: str) -> None:
-        self.delete_findings(sub, scan_id)
-        self.table.delete_item(Key={"PK": f"USER#{sub}", "SK": f"SCAN#{scan_id}"})
+    def claim_scan(self, sub: str, scan_id: str, from_statuses: tuple, fields: dict) -> bool:
+        """상태가 from_statuses 중 하나일 때만 바꾼다. 중복 이벤트가 같은 스캔을 두 번 처리하지 않게 한다."""
+        return self._update(f"USER#{sub}", f"SCAN#{scan_id}", fields, from_statuses)
 
     # 결과(check 단위)
     def put_findings(self, sub: str, scan_id: str, groups: list, expires: int) -> None:
@@ -107,16 +107,26 @@ class Store:
                 return items
             kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
-    def _update(self, pk, sk, fields: dict) -> bool:
-        """있는 항목만 고친다. 없으면 False(update_item이 새 항목을 만들지 않게)."""
+    def _update(self, pk, sk, fields: dict, from_statuses: tuple = ()) -> bool:
+        """있는 항목만 고친다. 없으면 False(update_item이 새 항목을 만들지 않게).
+
+        from_statuses가 있으면 현재 status가 그중 하나일 때만 고친다.
+        """
         keys = list(fields)
+        names = {f"#f{i}": key for i, key in enumerate(keys)}
+        values = {f":v{i}": fields[key] for i, key in enumerate(keys)}
+        condition = "attribute_exists(PK)"
+        if from_statuses:
+            names["#status"] = "status"
+            values.update({f":s{i}": status for i, status in enumerate(from_statuses)})
+            condition += " AND #status IN (" + ", ".join(f":s{i}" for i in range(len(from_statuses))) + ")"
         try:
             self.table.update_item(
                 Key={"PK": pk, "SK": sk},
                 UpdateExpression="SET " + ", ".join(f"#f{i} = :v{i}" for i in range(len(keys))),
-                ExpressionAttributeNames={f"#f{i}": key for i, key in enumerate(keys)},
-                ExpressionAttributeValues={f":v{i}": fields[key] for i, key in enumerate(keys)},
-                ConditionExpression="attribute_exists(PK)",
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+                ConditionExpression=condition,
             )
         except Exception as err:
             if error_code(err) == "ConditionalCheckFailedException":

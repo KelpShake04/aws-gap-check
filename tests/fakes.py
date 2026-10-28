@@ -27,10 +27,14 @@ class FakeTable:
 
     def update_item(self, Key, UpdateExpression, ExpressionAttributeNames,
                     ExpressionAttributeValues, ConditionExpression):
-        assert ConditionExpression == "attribute_exists(PK)"
+        assert ConditionExpression.startswith("attribute_exists(PK)")
         item = self.items.get((Key["PK"], Key["SK"]))
         if item is None:
             raise ClientError("ConditionalCheckFailedException")
+        if "#status IN" in ConditionExpression:
+            allowed = [v for k, v in ExpressionAttributeValues.items() if k.startswith(":s")]
+            if item.get(ExpressionAttributeNames["#status"]) not in allowed:
+                raise ClientError("ConditionalCheckFailedException")
         for name, value in re.findall(r"(#f\d+) = (:v\d+)", UpdateExpression):
             item[ExpressionAttributeNames[name]] = copy.deepcopy(ExpressionAttributeValues[value])
 

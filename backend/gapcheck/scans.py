@@ -7,6 +7,7 @@ from . import ids
 from .common import Conflict, NotFound, TooMany, Unavailable, error_code, expires_at, iso, parse_iso
 
 ACTIVE_STATUSES = ("QUEUED", "RUNNING", "PROCESSING", "EXPLAINING")
+DELETED = "DELETED"
 # 이벤트를 놓쳐 진행 중으로 남은 스캔이 사용자를 영원히 막지 않게 한다(CodeBuild 대기+실행 최대 60분)
 STALE_SECONDS = 70 * 60
 
@@ -66,7 +67,7 @@ def start(store, codebuild, sub: str, conn_id: str, *, project: str, now: dateti
 
 def get(store, sub: str, scan_id: str) -> dict:
     scan = store.get_scan(sub, scan_id) if ids.valid("scan", scan_id) else None
-    if not scan:
+    if not scan or scan.get("status") == DELETED:
         raise NotFound("스캔을 찾을 수 없습니다.")
     return scan
 
@@ -79,4 +80,7 @@ def delete(store, s3, sub: str, scan_id: str, *, bucket: str, now: datetime) -> 
     keys = [{"Key": obj["Key"]} for obj in listed.get("Contents", [])]
     if keys:
         s3.delete_objects(Bucket=bucket, Delete={"Objects": keys})
-    store.delete_scan(sub, scan_id)
+    store.delete_findings(sub, scan_id)
+    # 기록은 표시만 남긴다. 지워 버리면 일일 한도 계산에서 빠져 한도를 우회할 수 있다(TTL로 30일 뒤 삭제).
+    store.update_scan(sub, scan_id, {"status": DELETED, "counts": {}, "summary": None, "error": "",
+                                     "updatedAt": iso(now)})

@@ -15,7 +15,8 @@
 | 프롬프트 인젝션: 태그에 "이전 지시를 무시하라" | Gemini에는 Prowler 메타데이터와 개수만 보내고 고객 문자열은 보내지 않는다. 출력은 스키마로 재검증하고 해설은 아무 동작도 일으키지 않는다 | `gapcheck/explain.py`, `gapcheck/validate.py` | `tests/test_analysis.py`(프롬프트에 고객 문자열 없음) |
 | 고객 데이터의 외부(Google) 전송 | 위와 같음. 계정 ID, 리소스 이름, 정책 원문이 Google로 가지 않는다 | `explanation_input()` | 같은 테스트 |
 | 빌드 명령 주입 | CodeBuild 입력을 정규식으로 다시 검증하고 Prowler를 셸 없이 인자 목록으로 실행 | `scanner/run_scan.py` | `tests/test_run_scan.py` |
-| 비용 공격(스캔 남발) | 관리자만 사용자 생성, 사용자당 동시 1개·하루 10회, API throttling, CodeBuild 동시 1개, Budgets 알림 | `gapcheck/scans.py`, 템플릿 | `tests/test_core.py` 한도 테스트 |
+| 비용 공격(스캔 남발) | 관리자만 사용자 생성, 사용자당 동시 1개·하루 10회, API throttling, CodeBuild 동시 1개, Budgets 알림. 스캔을 지워도 기록은 `DELETED`로 남아 하루 한도에서 빠지지 않는다 | `gapcheck/scans.py`, 템플릿 | `tests/test_core.py` 한도 테스트 |
+| 중복 이벤트로 이중 처리 | EventBridge가 같은 `SUCCEEDED`를 두 번 줘도 상태를 `QUEUED/RUNNING → PROCESSING`으로 조건부 전환한 호출만 처리한다 | `handlers/scan_finished.py`, `Store.claim_scan` | `tests/test_handlers.py` |
 | 시크릿 유출 | Gemini 키는 SSM SecureString. 헤더로만 보내고 오류 메시지·로그에서 가림 | `gapcheck/llm.py` | `tests/test_llm.py` |
 | 결과 데이터 장기 보관 | 30일 후 자동 삭제(S3 수명주기, DynamoDB TTL), 즉시 삭제 버튼, 버킷 비공개·TLS 강제 | 템플릿, `gapcheck/scans.py` | 삭제 테스트 |
 
@@ -25,4 +26,7 @@
 - Lambda 실행 역할 신뢰 정책에는 `aws:SourceAccount` 조건을 넣지 않았다(실행 실패 위험). CodeBuild 역할에는 넣었다.
 - CSP의 `connect-src`는 스택 순환 참조를 피하려고 리전의 `execute-api` 와일드카드를 쓴다. 사용자 지정 도메인을 쓰면 좁힐 수 있다.
 - Cognito MFA는 꺼 두었다(시연 편의). 실제 서비스라면 켠다.
+- Gemini API 무료 등급은 보낸 내용이 Google의 제품 개선에 쓰일 수 있다(약관 확인 필요). 보내는 것은 Prowler의 공개 점검 메타데이터와 개수·리전뿐이라 위험은 낮지만, 실제 서비스라면 유료 등급이나 AWS 안의 모델(Bedrock)을 쓴다.
+- 스캔 리전은 `ap-northeast-2` 하나로 고정했다(`scanner/run_scan.py`의 `SCAN_REGION`). 다른 리전의 리전 리소스는 점검하지 않는다.
+- 동시 스캔 제한(사용자당 1개)은 목록 조회 후 저장이라 동시 요청 두 개가 겹치면 둘 다 통과할 수 있다. CodeBuild 동시 실행 1개 제한이 실제 실행을 막는다.
 - ExternalId는 비밀값이 아니다(AWS 안내). CodeBuild 환경 변수로 평문 전달되며, 보안은 "서버만 발급하고 사용자는 바꿀 수 없다"는 점에서 나온다.

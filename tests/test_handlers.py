@@ -50,6 +50,11 @@ class ApiTest(unittest.TestCase):
         status, body = self.call("GET /scans/{id}", id=scan_id)
         self.assertEqual((status, body["findings"]), (200, []))
 
+        self.deps.store.update_scan(ALICE, scan_id, {"status": "DONE"})
+        self.assertEqual(self.call("DELETE /scans/{id}", id=scan_id)[0], 204)
+        self.assertEqual(self.call("GET /scans")[1]["scans"], [])
+        self.assertEqual(self.call("GET /scans/{id}", id=scan_id)[0], 404)
+
     def test_requires_valid_sub(self):
         for sub in ["", "not-a-uuid", None]:
             self.assertEqual(self.call("GET /scans", sub=sub)[0], 401)
@@ -122,6 +127,14 @@ class ScanFinishedTest(unittest.TestCase):
         # 같은 이벤트가 다시 와도 처리하지 않는다
         self.assertEqual(self.run_event("SUCCEEDED"), "ignored")
         self.assertEqual(len(self.generate_calls), 6)
+
+    def test_duplicate_success_event_while_processing_is_ignored(self):
+        self.s3.put_json("bucket", f"raw/{ALICE}/{self.scan_id}/prowler.ocsf.json",
+                         json.loads((FIXTURES / "ocsf-sample.json").read_text()))
+        # 첫 이벤트를 처리하는 중(EXPLAINING)에 같은 SUCCEEDED가 한 번 더 온 상황
+        self.store.update_scan(ALICE, self.scan_id, {"status": "EXPLAINING"})
+        self.assertEqual(self.run_event("SUCCEEDED"), "ignored")
+        self.assertEqual(self.generate_calls, [])
 
     def test_build_failure_marks_failed_with_phase(self):
         self.assertEqual(self.run_event("FAILED"), "failed")

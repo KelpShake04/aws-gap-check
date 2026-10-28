@@ -9,7 +9,7 @@
 
 ## 취약 설정 만들기 (테스트 계정, 비용 거의 없음)
 
-계정 주인이 자기 계정 CloudShell(서울 리전)에서 실행한다.
+계정 주인이 자기 계정 CloudShell(서울 리전)에서 실행한다. 스캐너는 `ap-northeast-2`만 점검하므로 취약 리소스는 반드시 서울 리전에 만든다.
 
 ```bash
 VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)

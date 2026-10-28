@@ -84,7 +84,8 @@ def start_scan(deps, sub, params, body):
 
 
 def list_scans(deps, sub, params, body):
-    return 200, {"scans": [scan_view(s) for s in deps.store.list_scans(sub)]}
+    return 200, {"scans": [scan_view(s) for s in deps.store.list_scans(sub)
+                           if s.get("status") != scans.DELETED]}
 
 
 def get_scan(deps, sub, params, body):

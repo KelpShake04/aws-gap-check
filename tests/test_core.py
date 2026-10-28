@@ -120,6 +120,16 @@ class ScanTest(Base):
         with self.assertRaises(TooMany):
             self.start(conn, now=NOW + timedelta(minutes=1), limit=1)
 
+    def test_deleting_scans_does_not_reset_daily_limit(self):
+        conn = self.active_connection()
+        first = self.start(conn, limit=1)
+        self.store.update_scan(ALICE, first["id"], {"status": "DONE"})
+        scans.delete(self.store, FakeS3(), ALICE, first["id"], bucket="b", now=NOW)
+        with self.assertRaises(NotFound):
+            scans.get(self.store, ALICE, first["id"])
+        with self.assertRaises(TooMany):
+            self.start(conn, now=NOW + timedelta(minutes=1), limit=1)
+
     def test_codebuild_failure_marks_scan_failed(self):
         conn = self.active_connection()
         with self.assertRaises(Unavailable):
@@ -136,7 +146,9 @@ class ScanTest(Base):
         s3.put_json("bucket", f"raw/{ALICE}/{scan['id']}/prowler.ocsf.json", [])
         s3.put_json("bucket", f"raw/{BOB}/{scan['id']}/prowler.ocsf.json", [])
         scans.delete(self.store, s3, ALICE, scan["id"], bucket="bucket", now=NOW)
-        self.assertIsNone(self.store.get_scan(ALICE, scan["id"]))
+        with self.assertRaises(NotFound):
+            scans.get(self.store, ALICE, scan["id"])
+        self.assertEqual(self.store.get_scan(ALICE, scan["id"])["status"], scans.DELETED)
         self.assertEqual(self.store.list_findings(ALICE, scan["id"]), [])
         self.assertEqual(list(s3.objects), [("bucket", f"raw/{BOB}/{scan['id']}/prowler.ocsf.json")])
 
