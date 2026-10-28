@@ -1,0 +1,37 @@
+name: test
+
+# 비공개 레포는 Actions 무료 시간이 정해져 있다. job은 분 단위로 올림 과금되므로
+# 검사를 job 하나로 모으고, 문서만 바뀐 push는 건너뛴다.
+on:
+  pull_request:
+    paths-ignore: ["docs/**", "**.md"]
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "**.md"]
+
+permissions:
+  contents: read
+
+# 같은 브랜치에 새 push가 오면 이전 실행을 취소한다
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      # 표준 라이브러리만 쓰므로 설치할 패키지가 없다
+      - name: unittest
+        run: python -m unittest -v
+      # 템플릿 검증용 개발 도구. 런타임 의존성이 아니다. unittest가 실패해도 실행한다
+      - name: cfn-lint
+        if: success() || failure()
+        run: |
+          pip install cfn-lint==1.58.0
+          cfn-lint infra/*.yaml
