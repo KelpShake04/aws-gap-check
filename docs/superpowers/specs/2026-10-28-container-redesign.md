@@ -38,7 +38,7 @@
 
 ```
 [브라우저] ──HTTPS──> EC2 (Docker)
-                       ├─ caddy 컨테이너: 443 TLS 종료(Let's Encrypt, <공인IP>.sslip.io 도메인)
+                       ├─ caddy 컨테이너: 443 TLS 종료(Let's Encrypt HTTP-01, <이름>.duckdns.org 도메인)
                        └─ app 컨테이너 (Prowler 공식 이미지 기반)
                             ├─ HTTP 서버: 정적 화면 + /api/*
                             ├─ SQLite (/data 볼륨): 사용자, 세션, 연결, 스캔, 결과, 해설 캐시
@@ -57,7 +57,7 @@
 | CodeBuild + EventBridge | 컨테이너 안 작업자 스레드 + `subprocess`(셸 없이 인자 목록) | 제 판단 |
 | 결과 S3 버킷 | `/data/raw/{user}/{scan}/`, 30일 지나면 시작 시·하루 1회 정리 | 제 판단 |
 | SSM SecureString (Gemini 키) | 그대로 유지. 인스턴스 Role로 읽는다 | 제 판단 |
-| HTTPS | caddy + sslip.io로 공인 IP에 무료 인증서 | 제 판단, 아래 미정 참고 |
+| HTTPS·도메인 | caddy + DuckDNS 무료 서브도메인(`<이름>.duckdns.org`), Let's Encrypt 자동 발급·갱신 | 사용자 결정(2026-10-29) |
 
 ## 그대로 쓰는 코드
 
@@ -65,7 +65,7 @@
 
 ## IAM과 계정 연결
 
-- 인스턴스 Role 이름을 `aws-gap-check-app-role`로 고정한다. 권한: `sts:AssumeRole`(Resource `arn:aws:iam::*:role/AwsGapCheckReadOnlyRole`), `ssm:GetParameter`(Gemini 키 파라미터 하나). 그 밖의 권한은 주지 않는다.
+- 인스턴스 Role 이름을 `aws-gap-check-app-role`로 고정한다. 권한: `sts:AssumeRole`(Resource `arn:aws:iam::*:role/AwsGapCheckReadOnlyRole`), `ssm:GetParameter`(Gemini 키와 DuckDNS 토큰 파라미터 두 개). 그 밖의 권한은 주지 않는다.
 - 고객 템플릿(`infra/customer-role.yaml`)의 `aws:PrincipalArn` 허용 목록을 이 Role 하나로 바꾼다. `ExternalId` 조건은 그대로.
 - EC2는 IMDSv2만 허용(`HttpTokens: required`, hop limit 2: 컨테이너에서 쓰기 위해).
 
@@ -78,15 +78,15 @@
 
 1. Gemini 키를 SSM `/aws-gap-check/gemini-api-key`에 SecureString으로 저장한다(CloudShell 한 줄, 기존 `docs/deploy.md` 1단계 그대로).
 2. CloudFormation 콘솔에서 `infra/ec2.yaml`로 스택을 만든다. 파라미터는 Gemini 모델 이름 하나(기본값 제공).
-3. 인스턴스 user data가 Docker 설치 → 공개 레포 clone(태그 고정) → `docker compose up -d`를 한다. 5~10분 뒤 스택 출력의 `https://<IP>.sslip.io` 로 접속한다.
+3. 인스턴스 user data가 Docker 설치 → 공개 레포 clone(태그 고정) → `docker compose up -d`를 한다. user data는 DuckDNS에 현재 공인 IP를 등록한다. 5~10분 뒤 `https://<이름>.duckdns.org` 로 접속한다.
 4. Session Manager로 사용자를 만든다.
 5. 고객 계정(조원 계정 또는 같은 계정)에 `customer-role.yaml`을 배포하고 웹에서 연결을 검증한다.
 
 ## 비용
 
 - 상시 비용이 생긴다. 인스턴스를 켜 둔 동안만 과금되므로, 발표 준비·시연 때만 켜고 평소에는 중지한다.
-- Prowler가 메모리를 많이 쓰므로 `t3.small`(2GB)을 기본으로 한다. 서울 리전 시간당 약 $0.03, 하루 8시간씩 2주면 약 $4 수준(제 추정, 가격 확인 필요). `t3.micro`(무료 티어, 1GB)는 swap을 붙여 시도해 볼 수 있지만 스캔이 메모리 부족으로 죽을 위험이 있다.
-- Elastic IP 요금(시간당 약 $0.005)이 인스턴스를 중지해도 계속 붙는다(월 약 $3.6). 발표가 끝나면 스택을 지워서 함께 없앤다.
+- **인스턴스는 `t3.medium`(4GB)으로 정했다(사용자 결정, 2026-10-29).** Prowler 스캔, DB, 이미지 빌드가 한 대에서 겹치므로 여유를 둔다. 시간당 약 $0.05, 개발·시연으로 월 100시간 켜면 약 $5(제 추정, 서울 리전 가격 확인 필요). 중지해도 EBS 30GB는 월 약 $2.4가 계속 나가므로 **안 쓸 때는 반드시 중지**하고, 켜 둔 채 두면 월 약 $38이다. 구현 단계에서 첫 스캔 때 `docker stats`로 최대 메모리를 재서 1.5GB 이하면 `t3.small`로 내릴 수 있다. `t3.micro`(1GB)는 메모리 부족 위험이 커서 쓰지 않는다. Spot 인스턴스는 시연 중 회수될 수 있어 쓰지 않는다.
+- Elastic IP를 쓰지 않는다. 중지된 인스턴스에는 IPv4 요금이 없고, 켜 둔 동안만 공인 IPv4 요금(시간당 약 $0.005)이 붙는다(제 추정, 가격 확인 필요). 재시작하면 IP가 바뀌지만 부팅 때 DuckDNS를 갱신한다.
 - NAT Gateway, 로드 밸런서는 쓰지 않는다.
 
 ## 보안에서 달라지는 점 (발표에서 설명)
@@ -99,7 +99,7 @@
 
 - VPC: 템플릿이 전용 VPC(퍼블릭 서브넷 1개, 인터넷 게이트웨이)를 직접 만든다. NAT는 없다. 조원 계정에 기본 VPC가 없거나 삭제돼 있어도 스택이 실패하지 않게 하기 위해서다. 파라미터는 늘리지 않는다.
 - 이미지: EC2 안에서 빌드한다. 기반 이미지는 `public.ecr.aws/prowler-cloud/prowler:<고정 버전>`(Docker Hub 요청 한도와 무관)이고, 앱 코드는 그 위에 복사만 해서 빌드가 가볍다. 루트 EBS는 30GB gp3(암호화). user data는 git 태그(또는 커밋 SHA)를 파라미터 기본값으로 고정해 clone한다. 레포가 공개라 나중에 GHCR 공개 이미지로 바꾸기 쉽다.
-- 재시작: Elastic IP를 붙여 중지·시작 후에도 `<IP>.sslip.io` 주소와 인증서가 유지되게 한다. 중지 중에도 IPv4 요금(시간당 약 $0.005, 월 약 $3.6)이 붙는다. Docker는 systemd로 부팅 시 켜지고, 컨테이너는 `restart: unless-stopped`로 자동 기동한다. 인증서와 SQLite는 볼륨에 둬서 재시작 후에도 남는다.
+- 재시작: Elastic IP 대신 부팅 때마다 systemd 서비스가 DuckDNS에 새 공인 IP를 등록한다(DNS 반영까지 1분 안팎). 주소 `<이름>.duckdns.org`와 인증서(caddy 볼륨)는 그대로 유지된다. Docker는 systemd로 부팅 시 켜지고, 컨테이너는 `restart: unless-stopped`로 자동 기동한다. 인증서와 SQLite는 볼륨에 둬서 재시작 후에도 남는다.
 
 ## 교수님 과제 공지 반영 (2026-10-29)
 
@@ -117,7 +117,7 @@
 | 팀 역할 (10) | 역할표를 문서와 GitHub 이슈·PR 담당자로 남긴다 | `docs/ROLES.md`, 이슈 | 사용자 정리 |
 | 가점 (10) | GitHub 이력, GitHub Actions CI(공개 레포라 무료), 선택으로 CD | 워크플로 파일 | 사용자 |
 
-DBMS와 ERD가 평가 항목에 명시돼 있다. 저장소 접근은 `store.py`의 한 인터페이스 뒤에 두어 SQLite와 PostgreSQL을 바꿔 끼울 수 있게 한다. **어느 쪽으로 갈지는 10주차 게시판 배포 수업을 본 뒤에 정한다**(수업 방식과 맞추면 "배운 내용 적용"이 된다). 어느 쪽이든 ERD는 그린다.
+DBMS와 ERD가 평가 항목에 명시돼 있다. **결정(사용자, 2026-10-29): 10주차 수업에서 쓰는 DBMS가 있으면 그것을 따르고(MySQL/MariaDB 가능성), 없으면 PostgreSQL 컨테이너를 쓴다.** PostgreSQL을 기본으로 한 이유는 평가표의 DBMS·ERD 항목, EC2 1대 제약(`docker compose`에 서비스 하나 추가, RDS는 상시 과금), 앱 전용 DB 계정과 외래키로 사용자 격리를 설명할 수 있다는 점이다. 저장소 접근은 `store.py`의 한 인터페이스 뒤에 두어 구현이 DBMS 결정을 기다리지 않게 하고, 시간이 부족하면 SQLite로 시작해 나중에 바꾼다. PostgreSQL 드라이버(`psycopg` 등)는 표준 라이브러리에 없어 의존성 하나가 늘어나며, 이 경우만 정당한 예외로 둔다. 어느 쪽이든 ERD는 그린다.
 
 ### 일정 (구현은 11주차 시작)
 
@@ -128,7 +128,7 @@ DBMS와 ERD가 평가 항목에 명시돼 있다. 저장소 접근은 `store.py`
 | 12 | 11/16~ | EC2 배포(CloudFormation), HTTPS, DB 확정, CI 추가, 조원 계정 연결 시연 |
 | 13 | 11/23~ | 시연 리허설, 시연 영상 촬영, 장표 완성, 제출 소스 정리, 최종 점검 |
 | 14 | 11/30~ | 발표(12/1) |
-| 발표 후 | | 스택·Elastic IP·SSM 파라미터·Gemini 키 삭제(`docs/demo-runbook.md`) |
+| 발표 후 | | 스택·SSM 파라미터(Gemini 키, DuckDNS 토큰)·Gemini 키·DuckDNS 서브도메인 삭제(`docs/demo-runbook.md`) |
 
 제출 마감일은 공지에 비어 있어(~O/OO) 확인이 필요하다. 마감이 발표 전이면 13주차 계획을 앞당긴다.
 
@@ -150,11 +150,14 @@ DBMS와 ERD가 평가 항목에 명시돼 있다. 저장소 접근은 `store.py`
 
 | 리스크 | 대응 |
 |---|---|
-| Prowler가 `t3.small`에서 메모리 부족 | 핵심 점검 항목만 실행(기존 `core-checks.json`), 안 되면 `t3.medium`으로 올리고 시연 때만 켠다 |
-| Let's Encrypt/sslip.io 발급 실패나 한도 | 자체 서명 인증서 대체, 또는 시연은 `http`와 로컬 `docker compose` |
+| 인스턴스를 켜 둔 채 잊어 비용 증가 | 안 쓸 때 중지. Budgets 월 $10 알림은 이미 있다. 발표 후 스택 삭제 |
+| DuckDNS·Let's Encrypt 장애나 발급 한도 | 자체 서명 인증서 대체, 또는 시연은 `http`와 로컬 `docker compose`. 발표 전 인증서를 미리 발급해 볼륨에 둔다 |
+| DuckDNS 토큰 유출 | 레포·이미지·user data 평문에 넣지 않고 SSM SecureString에 둔다. 갱신 호출은 로그에 URL이 남지 않게 한다. 유출 의심 시 DuckDNS에서 토큰을 재발급한다 |
 | Gemini 무료 한도 초과 | 호출 간격 제한, 해설 캐시, Prowler 원문 폴백 |
 | 조원 계정에서 Role 생성이 막힘 | 서비스 계정 자기 자신을 고객 계정으로 연결하는 대체 경로(발표에서 밝힘) |
 | 혼자 구현해 일정 지연 | MVP 우선, 확장은 11~12주차 진행 상황 보고 결정, 장표·영상은 조원에게 위임 |
+
+- 인증서 발급은 HTTP-01 방식으로 한다. 80포트를 이미 열어 두므로 기본 caddy 이미지로 충분하고, DuckDNS DNS 플러그인을 넣은 커스텀 이미지는 필요 없다. 발급이 막힐 때만 DNS-01(플러그인 이미지)로 바꾼다.
 
 ## 빌더에게 남기는 결정
 
@@ -165,7 +168,6 @@ DBMS와 ERD가 평가 항목에 명시돼 있다. 저장소 접근은 `store.py`
 ## 미정 (사용자 확인 필요)
 
 - 제출 마감일(공지에 비어 있음).
-- DBMS: SQLite와 PostgreSQL 중 선택. 10주차 수업 후 결정.
-- sslip.io 같은 외부 무료 도메인 서비스 사용 가능 여부. 안 되면 자체 서명 인증서나 CloudFront 추가 중 선택.
-- 인스턴스 크기: `t3.small`(유료, 안정적)과 `t3.micro`(무료 티어, 메모리 위험).
+- DBMS: 결정됨(수업 DBMS 우선, 없으면 PostgreSQL). 10주차 수업에서 쓰는 DBMS만 확인하면 된다.
+- DuckDNS 계정 가입(소셜 로그인, 사용자 직접)과 서브도메인 이름 정하기. 토큰은 SSM에 직접 저장한다.
 - 배포 담당과 배포 계정(구현은 사용자 전담, 배포는 역할 분담 후 결정).
