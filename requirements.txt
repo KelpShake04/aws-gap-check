@@ -1,0 +1,2 @@
+# 컨테이너 앱의 유일한 추가 의존성(MySQL 드라이버, 순수 Python). 해시를 고정해 설치한다(--require-hashes).
+PyMySQL==1.2.3 --hash=sha256:14f1c68e2ed859243ae5ca41ffbe677027fc46bc136a9f0be8a4e928e5e7415a

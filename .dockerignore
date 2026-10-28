@@ -1,0 +1,13 @@
+*
+!requirements.txt
+!backend/gapcheck/**
+!scanner/run_scan.py
+!scanner/core-checks.json
+!frontend/index.html
+!frontend/app.js
+!frontend/api.js
+!frontend/auth.js
+!frontend/style.css
+!infra/customer-role.yaml
+!tests/fixtures/ocsf-sample.json
+**/__pycache__

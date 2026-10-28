@@ -1,0 +1,68 @@
+# EC2 한 대(또는 로컬 PC)에서 서비스 전체를 띄운다: docker compose up -d --build
+# 값은 같은 폴더의 .env 파일에서 읽는다(레포에 올리지 않음). 만드는 법은 docs/container.md.
+name: aws-gap-check
+
+services:
+  mysql:
+    image: mysql:8.4.9
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?.env에 MYSQL_ROOT_PASSWORD가 필요합니다}
+      MYSQL_DATABASE: gapcheck
+      MYSQL_USER: gapcheck
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?.env에 MYSQL_PASSWORD가 필요합니다}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 볼륨을 처음 만들 때만 스키마와 앱 계정 권한(SELECT/INSERT/UPDATE/DELETE)을 적용한다
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # 초기화 중 임시 서버는 TCP를 받지 않으므로, TCP로 응답하면 스키마 적용이 끝난 것이다
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--protocol=tcp", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  app:
+    build: .
+    image: aws-gap-check-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_PASSWORD: ${MYSQL_PASSWORD:?.env에 MYSQL_PASSWORD가 필요합니다}
+      AWS_REGION: ap-northeast-2
+      AWS_DEFAULT_REGION: ap-northeast-2
+      # 비우면 AI 해설 없이 Prowler 원문을 보여 준다. 키는 SSM /aws-gap-check/gemini-api-key에서 읽는다.
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      DAILY_SCAN_LIMIT: ${DAILY_SCAN_LIMIT:-10}
+      # 데모 모드: /app/demo/ocsf-sample.json을 넣으면 AWS 없이 화면 흐름을 보여 준다(계정 검증을 건너뜀)
+      DEMO_FIXTURE: ${DEMO_FIXTURE:-}
+    volumes:
+      - app-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  mysql-data:
+  app-data:
+  caddy-data:
+  caddy-config:
