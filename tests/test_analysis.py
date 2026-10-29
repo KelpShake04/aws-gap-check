@@ -78,6 +78,16 @@ class ValidateTest(unittest.TestCase):
         self.assertEqual(len(result["steps"]), 5)
 
 
+class FallbackTest(unittest.TestCase):
+    def test_markdown_marks_are_removed(self):
+        group = {"title": "Bucket **public**", "risk": "Breaks **confidentiality** via `s3:GetObject`.",
+                 "recommendation": "Enable **Block Public Access** ([docs](https://example.com)) and __log__."}
+        result = explain.fallback_explanation(group)
+        self.assertEqual(result["summary"], "Bucket public")
+        self.assertEqual(result["risk"], "Breaks confidentiality via s3:GetObject.")
+        self.assertEqual(result["steps"], ["Enable Block Public Access (docs) and log."])
+
+
 class FakeCache:
     def __init__(self):
         self.data = {}
