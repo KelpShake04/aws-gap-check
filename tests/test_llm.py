@@ -182,8 +182,15 @@ class ErrorTest(unittest.TestCase):
         self.assertNotIn(KEY, str(ctx.exception))
 
     def test_timeout_error(self):
-        with self.assertRaises(llm.LLMError):
+        with self.assertRaises(llm.TransientError):
             call(FakeOpener(error=TimeoutError()))
+
+    def test_server_overload_is_transient_but_client_error_is_not(self):
+        with self.assertRaises(llm.TransientError):
+            call(FakeOpener(error=http_error(503, {"error": {"message": "high demand"}})))
+        with self.assertRaises(llm.LLMError) as ctx:
+            call(FakeOpener(error=http_error(400, {"error": {"message": "bad"}})))
+        self.assertNotIsInstance(ctx.exception, llm.TransientError)
 
 
 class ListModelsTest(unittest.TestCase):

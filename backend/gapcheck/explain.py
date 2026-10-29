@@ -7,15 +7,20 @@ Gemini에는 Prowler 점검 메타데이터(제목, 설명, 위험, 권장 조�
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 
 from . import llm
 from .validate import ValidationError, validate
 
+logger = logging.getLogger(__name__)
+
 PROMPT_VERSION = "v1"
 MIN_REMAINING_MS = 60_000
 MAX_RETRY_WAIT = 60
+# 5xx·타임아웃은 이만큼 기다렸다가 한 번 더 시도한다(구글 쪽 일시 과부하 대응)
+TRANSIENT_WAIT = 10
 # 연속으로 이만큼 실패하면(키·모델 오류, 한도 소진) 이 스캔의 남은 호출은 건너뛰고 바로 폴백한다
 MAX_CONSECUTIVE_FAILURES = 3
 
@@ -160,13 +165,22 @@ class Explainer:
             except llm.RateLimited as err:
                 wait = err.retry_after if err.retry_after is not None else self.interval
                 if attempt or wait > MAX_RETRY_WAIT:
+                    logger.warning("explanation fell back: rate limited")
                     self._failures += 1
                     return None
                 self.sleep(wait)
-            except (llm.InvalidResponse, ValidationError):
+            except (llm.InvalidResponse, ValidationError) as err:
                 if attempt:
+                    logger.warning("explanation fell back: %s", type(err).__name__)
                     return None
-            except llm.LLMError:
+            except llm.TransientError as err:
+                if attempt:
+                    logger.warning("explanation fell back: %s", err)
+                    self._failures += 1
+                    return None
+                self.sleep(TRANSIENT_WAIT)
+            except llm.LLMError as err:
+                logger.warning("explanation fell back: %s", err)
                 self._failures += 1
                 return None
         return None

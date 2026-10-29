@@ -139,6 +139,16 @@ class ExplainTest(unittest.TestCase):
         self.assertEqual(explainer.explain(self.groups[0]), (GOOD, "cache"))
         self.assertEqual(len(generate.prompts), 1)
 
+    def test_transient_error_is_retried_once(self):
+        generate = Recorder(llm.TransientError("HTTP 503"), GOOD)
+        self.assertEqual(self.explainer(generate).explain(self.groups[0]), (GOOD, "gemini"))
+        self.assertEqual(len(generate.prompts), 2)
+        self.assertIn(explain.TRANSIENT_WAIT, self.sleeps)
+
+    def test_transient_error_twice_falls_back(self):
+        generate = Recorder(llm.TransientError("HTTP 503"), llm.TransientError("HTTP 503"))
+        self.assertEqual(self.explainer(generate).explain(self.groups[0])[1], "prowler")
+
     def test_stops_calling_after_consecutive_failures(self):
         calls = []
 
