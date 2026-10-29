@@ -61,6 +61,16 @@ AWS 자격 증명 없이 화면 흐름 전체(로그인 → 연결 → 스캔 �
 
 MySQL 스키마를 바꾸면 `docker compose down -v`로 볼륨을 지워야 새 스키마가 적용된다(마이그레이션 도구 없음).
 
+## 실제 스캔 (로컬 PC, EC2 없이)
+
+2026-10-29 서비스 계정 자신을 고객 계정으로 연결해 확인했다(핵심 점검 50개, 약 75초).
+
+1. 관리자(콘솔 로그인 CLI 세션)로 `infra/local-app-role.yaml`을 스택 `aws-gap-check-local-app-role`로 배포한다.
+2. 앱 Role만 맡을 수 있는 IAM 사용자(예: `aws-gap-check-local`, 정책 `sts:AssumeRole` on `aws-gap-check-app-role`)와 액세스 키를 만들어 프로필(`agc-local`)에 저장한다. root는 AssumeRole을 못 해서 필요하다.
+3. `scripts/local_aws_creds.sh agc-local` → `.env.aws`(1시간짜리 앱 Role 자격 증명). `.env`에서 `DEMO_FIXTURE`를 빼고 `docker compose up -d`.
+4. 웹에서 연결을 만들고, 발급된 ExternalId로 `infra/customer-role.yaml`을 스택 `aws-gap-check-readonly-role`로 배포한 뒤 검증·스캔한다.
+5. 정리: 두 스택 삭제, IAM 사용자의 액세스 키와 사용자 삭제. EC2 템플릿이 같은 Role 이름을 쓰므로 EC2로 옮기기 전에 1번 스택을 지운다.
+
 ## 실제 스캔 (EC2)
 
 EC2에서는 `.env`에 `DEMO_FIXTURE`를 넣지 않는다. 그러면 앱이 인스턴스 Role(`aws-gap-check-app-role`)로 고객 계정의 `AwsGapCheckReadOnlyRole`을 `ExternalId`와 함께 맡아 Prowler를 실행한다. 고객 템플릿 `infra/customer-role.yaml`은 이 Role을 허용하도록 바꿔 두었다. AI 해설을 쓰려면 `.env`에 `GEMINI_MODEL=<모델 이름>`을 넣고 키를 SSM `/aws-gap-check/gemini-api-key`에 둔다. 템플릿과 user data는 다음 단계에서 만든다.
