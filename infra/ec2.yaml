@@ -144,7 +144,14 @@ Resources:
 
           apt-get update
           apt-get install -y docker.io docker-compose-v2 git curl
+          snap wait system seed.loaded
           snap install aws-cli --classic
+          # t3.medium(4GB)에서 MySQL·Prowler가 겹쳐도 OOM이 나지 않게 swap을 둔다
+          fallocate -l 2G /swapfile
+          chmod 600 /swapfile
+          mkswap /swapfile
+          swapon /swapfile
+          echo '/swapfile none swap sw 0 0' >> /etc/fstab
           systemctl enable --now docker
 
           # 부팅마다 DuckDNS에 현재 공인 IP를 등록한다(Elastic IP 없음). 토큰은 SSM에서 읽고 명령줄·로그에 남기지 않는다.
@@ -154,8 +161,10 @@ Resources:
           . /etc/aws-gap-check.env
           token=$(aws ssm get-parameter --region "$REGION" --name /aws-gap-check/duckdns-token \
             --with-decryption --query Parameter.Value --output text)
-          printf 'url = "https://www.duckdns.org/update?domains=%s&token=%s&ip="\n' "$NAME" "$token" |
-            curl -sS --retry 5 --retry-delay 3 -K - -o /dev/null
+          # DuckDNS는 토큰·이름이 틀려도 HTTP 200에 본문 KO를 준다
+          reply=$(printf 'url = "https://www.duckdns.org/update?domains=%s&token=%s&ip="\n' "$NAME" "$token" |
+            curl -sS --retry 5 --retry-delay 3 -K -)
+          [ "$reply" = OK ] || { echo "DuckDNS update failed: $reply" >&2; exit 1; }
           EOF
           chmod 700 /usr/local/bin/duckdns-update.sh
           printf 'REGION=%s\nNAME=%s\n' "$REGION" "$NAME" > /etc/aws-gap-check.env

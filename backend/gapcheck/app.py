@@ -53,7 +53,8 @@ def explainer_factory(env, store, ssm_client):
     cached = {}
 
     def api_key() -> str:
-        if "key" not in cached:
+        # 빈 값은 캐시하지 않는다: 키를 나중에 SSM에 넣어도 재시작 없이 반영된다
+        if not cached.get("key"):
             cached["key"] = env.get("GEMINI_API_KEY", "")
             if not cached["key"] and ssm_client is not None:
                 try:
