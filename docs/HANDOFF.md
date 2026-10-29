@@ -16,22 +16,24 @@ AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국�
 - 로컬 CLI 프로필 `cli-rds`는 RDS 실습용 권한뿐이라 Bedrock, NAT 조회, Budgets 권한이 없다. 구현용 배포 권한은 사용자가 별도로 준비해야 한다.
 
 ## 아직 모르는 것
-- Gemini API 무료 한도와 사용 가능한 모델(Flash 우선).
 - 평가 기준(IaC 필수 여부, 시연 시간), 비용 상한, 조원 참여 여부.
-- 서비스를 배포할 AWS 계정과 배포 권한(CI에서 쓸지, 사용자가 로컬에서 배포할지).
+- 조원 계정 연결 동의와 계정 종류.
 
-## 현재 상태 (2026-10-29, 컨테이너 버전)
+## 현재 상태 (2026-10-29, 배포 완료)
 - 배포 구조는 EC2 한 대 + Docker Compose(app, mysql, caddy). 설계는 `docs/superpowers/specs/2026-10-28-container-redesign.md`, 실행·구조·한계는 `docs/container.md`, ERD는 `docs/erd.md`, 구성·보안은 `docs/architecture.md`·`docs/security-design.md`.
-- main에 있는 것: 앱 전체(PR #8), `infra/ec2.yaml`(PR #9, #10), CI(unittest 134개 + MySQL 서비스, cfn-lint), 후속 개선(PR #12), 서버리스 코드는 `legacy/serverless/`.
-- 확인한 것: 앱 이미지 안에서 전체 테스트 통과, 로컬 `docker compose` 데모 모드 흐름(headless Chrome), 본인 계정 실제 스캔 성공(로컬 compose, 75초).
-- **아직 안 한 것**: `infra/ec2.yaml` 실제 스택 배포(DuckDNS 토큰·Gemini 키 필요), Gemini 실호출, 조원 계정 연결 시연, 장표·시연 영상. `<details>` 유지는 브라우저로 확인 안 함.
-- 사용자 몫: DuckDNS 서브도메인·토큰, Gemini 키를 SSM에 저장, 스택 `aws-gap-check-local-app-role` 삭제 후 `infra/ec2.yaml` 배포, 역할 배정(`docs/ROLES.md`), 제출 마감일 확인.
+- **배포됨**: 스택 `aws-gap-check-ec2`(ap-northeast-2b, `c7i-flex.large`: Free Tier 계정이라 `t3.medium`이 거부됨), `https://agc-kelp04.duckdns.org`. SSM 파라미터 이름은 `/gapcheck/...`(`aws`·`ssm` 접두사는 예약어).
+- **AI 해설**: 주 모델 `gemini-3.1-flash-lite`(`.env`의 `GEMINI_MODEL`, 스택 파라미터 `GeminiModel`은 비어 있음). 5xx·타임아웃이면 10초, 20초 간격으로 3번 시도 후 보조 모델 `gemini-3.5-flash-lite`(`GEMINI_FALLBACK_MODEL`, compose 기본값)를 한 번 시도하고, 그래도 안 되면 Prowler 원문(영어)으로 대체한다. 해설 캐시(`explanations`)는 만료가 없다.
+- main에 있는 것: 앱 전체, `infra/ec2.yaml`, CI(unittest 140개 + MySQL 서비스, cfn-lint), 재시도·폴백(PR #16, #17), 서버리스 코드는 `legacy/serverless/`.
+- 확인한 것: EC2에서 본인 계정 실제 스캔(14개 항목) + Gemini 해설, 캐시로 재스캔 70초대. 보조 모델 전환은 503이 날 때만 발동해서 실제 전환은 아직 못 봤다.
+- 열린 PR: #18(이메일 비ASCII 거부). 깨진 이메일이 계정에 저장돼 로그인이 막힌 적이 있다.
+- 사용자 몫: 역할 배정(`docs/ROLES.md`), 제출 마감일 확인, 조원 계정 연결 여부 결정, 시연 후 EC2 중지·정리.
+- 외부 공유 전 주의: 스캔 결과 캡처에 계정 ID·이메일·인스턴스 ID가 보인다. 가린 뒤에 공유한다.
 
 ## 이전 상태 (서버리스 버전, 2026-10-28, 보관)
 서버리스 구현(PR #3)은 코드 완성까지 했고 실제 배포는 하지 않은 채 컨테이너 구성으로 전환했다. 관련 파일은 `legacy/serverless/`(README 참고)에 있다.
 
 ## 다음 단계 (권장 순서)
-1. 사용자: DuckDNS·Gemini 키 준비 → `infra/ec2.yaml` 배포 → `SiteUrl` 접속, Session Manager로 `create-user`. 오류가 나면 CloudFormation 이벤트·`/var/log/cloud-init-output.log`를 들고 고친다.
-2. 서비스 계정 자신을 고객 계정으로 연결해 EC2에서 실제 스캔·Gemini 해설 확인.
-3. 조원 계정 연결 시연, 시연 영상, 장표(역할은 `docs/ROLES.md`).
-4. 발표(12/1) 후 `docs/demo-runbook.md`의 정리 절차로 삭제.
+1. 시연 직전에 스캔을 한 번 더 돌려 해설 캐시가 차 있는지 확인한다.
+2. 조원 계정 연결 시연(가능하면), 시연 영상, 장표(역할은 `docs/ROLES.md`).
+3. 사용하지 않는 동안 EC2를 중지해 비용을 줄인다(시연 전 시작 후 DuckDNS IP 갱신 확인).
+4. 발표(12/1) 후 `docs/demo-runbook.md`의 정리 절차로 스택, SSM 파라미터, IAM 사용자, DuckDNS, Gemini 키를 삭제한다.
