@@ -113,7 +113,7 @@
 | 프로젝트 개요 (5) | 선정 배경: 초보자가 보안 점검 결과를 읽기 어렵다. 목표: 점검 + 한국어 해설. 서버리스에서 컨테이너로 단순화한 과정과 이유도 "교훈"으로 넣는다 | 장표 | 조원 |
 | 전체 시스템 구성도 (10) | EC2 1대 + Docker(app, caddy) + 고객 계정 Role 연결 흐름도, 서비스 흐름도 | 구성도 2장 | 조원(초안은 이 문서) |
 | S/W·DBMS·AI 활용 (20) | Python 표준 라이브러리 서버, DBMS(아래 결정), Gemini API(AI API 활용), Prowler, Docker·CloudFormation, 배포 명령 | 장표 + `docs/deploy.md` | 사용자 + 조원 |
-| 개발 소스·완성도 (20) | 동작하는 URL, 테스트(현재 99개), 제출용 zip | 레포, zip | 사용자 |
+| 개발 소스·완성도 (20) | 동작하는 URL, 테스트(현재 133개), 제출용 zip | 레포, zip | 사용자 |
 | 발표 장표 (25) | 20분 구성(아래), 시연 영상 포함 | PPT, 영상 | 조원 |
 | 팀 역할 (10) | 역할표를 `docs/ROLES.md`에 쓰고 발표 마지막에 역할 슬라이드를 넣는다. 조원이 만든 장표·영상·문서가 참여 근거가 된다(GitHub 이력에 의존하지 않는다) | `docs/ROLES.md`, 역할 슬라이드 | 사용자 정리 |
 | 가점 (10) | 사용자의 GitHub 이력(커밋·PR), GitHub Actions CI(공개 레포라 무료), 선택으로 CD. 조원 참여와 별개로 받는다 | 워크플로 파일 | 사용자 |
@@ -144,7 +144,7 @@ DBMS와 ERD가 평가 항목에 명시돼 있다. **결정(사용자, 2026-10-29
    - 확장(시간이 남으면): 우선순위 요약, GitHub Actions 배포(CD), 해설 캐시, 사용자 생성 CLI 개선.
 2. **시연 실패에 대비한 3단계 대체 경로.** (a) EC2의 HTTPS 주소 (b) 로컬 `docker compose up` (c) 사전 녹화 영상. 사전 스캔 결과(`tests/fixtures/ocsf-sample.json`, `scripts/sanitize_ocsf.py`)로 Prowler 없이도 해설 화면을 보여 준다.
 3. **저장소 접근을 한 인터페이스로 고정**해 테스트에서는 가짜 저장소를 쓰고 운영에서는 MySQL을 쓴다. 기존 `Store`의 메서드 이름을 유지해 기존 테스트를 재사용한다.
-4. **CI를 먼저 붙인다(가점).** 공개 레포는 GitHub Actions가 무료다. PR마다 `python -m unittest`, `cfn-lint infra/ec2.yaml`, `docker build`를 돌린다. CD는 확장 항목으로, 하려면 GitHub OIDC로 SSM `SendCommand`를 호출하고 장기 키는 두지 않는다.
+4. **CI를 먼저 붙인다(가점).** 공개 레포는 GitHub Actions가 무료다. PR마다 `python -m unittest`(MySQL 8.4.9 서비스 컨테이너로 DB 테스트 포함), `cfn-lint infra/*.yaml`을 돌린다. `docker build`는 GitHub runner에서 `public.ecr.aws` 익명 pull이 429로 막혀 뺐다(2026-10-29). CD는 확장 항목으로, 하려면 GitHub OIDC로 SSM `SendCommand`를 호출하고 장기 키는 두지 않는다.
 5. **컨테이너 보안 기본값.** app은 비루트 사용자로 실행, `docker.sock`은 마운트하지 않음, `/data`만 쓰기 가능한 볼륨, 포트는 caddy만 공개, 이미지·Prowler 버전 고정. IMDS hop limit 2라서 컨테이너가 인스턴스 Role을 쓸 수 있다는 점을 위험으로 기록하고, 앱은 외부 URL을 서버에서 요청하는 기능을 두지 않아 SSRF 표면을 없앤다.
 6. **서버리스 구현은 남겨 둔다.** main의 서버리스 코드와 `infra/service.yaml`은 지우지 않고 `legacy/`로 옮길지 빌더가 정한다. "서버리스에서 컨테이너로 바꾼 이유"를 발표 교훈으로 쓴다.
 7. **리스크와 대응**
@@ -159,6 +159,11 @@ DBMS와 ERD가 평가 항목에 명시돼 있다. **결정(사용자, 2026-10-29
 | 혼자 구현해 일정 지연 | MVP 우선, 확장은 11~12주차 진행 상황 보고 결정, 장표·영상·문서는 조원에게 위임(파일로 받음) |
 
 - 인증서 발급은 HTTP-01 방식으로 한다. 80포트를 이미 열어 두므로 기본 caddy 이미지로 충분하고, DuckDNS DNS 플러그인을 넣은 커스텀 이미지는 필요 없다. 발급이 막힐 때만 DNS-01(플러그인 이미지)로 바꾼다.
+
+## 구현 현황 (2026-10-29)
+
+- 완료: 컨테이너 앱(PR #8), `infra/ec2.yaml`(PR #9, #10), CI(DB 테스트 포함), `docs/ROLES.md` 초안.
+- 미완료: EC2 실제 배포(DuckDNS 토큰·Gemini 키 필요), 서버리스 코드 `legacy/` 정리 결정, 시연 영상·장표(조원).
 
 ## 빌더에게 남기는 결정
 
