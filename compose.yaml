@@ -30,6 +30,10 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+    # 로컬 PC에서 실제 계정을 스캔할 때만 있는 파일(scripts/local_aws_creds.sh). EC2에서는 인스턴스 Role을 쓴다.
+    env_file:
+      - path: .env.aws
+        required: false
     environment:
       DB_PASSWORD: ${MYSQL_PASSWORD:?.env에 MYSQL_PASSWORD가 필요합니다}
       AWS_REGION: ap-northeast-2
