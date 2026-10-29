@@ -49,6 +49,7 @@ def wait_for_db(store, attempts: int = 30) -> None:
 def explainer_factory(env, store, ssm_client):
     """Gemini 키는 처음 쓸 때 한 번 읽어 메모리에만 둔다. 로그에 남기지 않는다."""
     model = env.get("GEMINI_MODEL", "")
+    fallback_model = env.get("GEMINI_FALLBACK_MODEL", "")
     max_rpm = int(env.get("GEMINI_MAX_RPM", "10"))
     cached = {}
 
@@ -67,11 +68,15 @@ def explainer_factory(env, store, ssm_client):
 
     def make_explainer():
         key = api_key() if model else ""
-        generate = None
+        generate = fallback_generate = None
         if key:
             def generate(system, user, schema):
                 return llm.generate_json(system, user, schema, model=model, api_key=key)
-        return explain.Explainer(generate, store, model=model, max_rpm=max_rpm)
+            if fallback_model and fallback_model != model:
+                def fallback_generate(system, user, schema):
+                    return llm.generate_json(system, user, schema, model=fallback_model, api_key=key)
+        return explain.Explainer(generate, store, fallback_generate=fallback_generate,
+                                 model=model, max_rpm=max_rpm)
 
     return make_explainer
 
