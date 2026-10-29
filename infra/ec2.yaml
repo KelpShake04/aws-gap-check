@@ -1,0 +1,198 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  aws-gap-check on one EC2 instance: Docker Compose (mysql, app, caddy), instance role
+  aws-gap-check-app-role, DuckDNS name for HTTPS. No NAT, no load balancer, no SSH.
+
+# 배포 전에 SSM Parameter Store(SecureString)에 두 값을 저장해 둔다(둘 다 이 템플릿이 만들지 않는다):
+#   /aws-gap-check/gemini-api-key   Gemini API 키 (없으면 AI 해설 없이 Prowler 원문)
+#   /aws-gap-check/duckdns-token    DuckDNS 토큰
+# 스택은 IAM Role 이름을 고정하므로 CAPABILITY_NAMED_IAM이 필요하다(콘솔에서는 확인란 체크).
+# 로컬 실행용 스택 aws-gap-check-local-app-role이 있으면 같은 Role 이름이라 먼저 지운다.
+
+Parameters:
+  DuckDnsSubdomain:
+    Type: String
+    Description: DuckDNS 서브도메인 이름(<이름>.duckdns.org 의 이름 부분)
+    AllowedPattern: "^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$"
+    ConstraintDescription: 소문자, 숫자, 하이픈 3~30자
+  GeminiModel:
+    Type: String
+    Description: Gemini 모델 이름. 비우면 AI 해설 없이 Prowler 원문을 보여 준다
+    Default: ""
+    AllowedPattern: "^[A-Za-z0-9._-]{0,60}$"
+  RepoRef:
+    Type: String
+    Description: 배포할 git 태그, 브랜치 또는 커밋 SHA (KelpShake04/aws-gap-check)
+    Default: main
+    AllowedPattern: "^[A-Za-z0-9._/-]{1,100}$"
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues: [t3.small, t3.medium, t3.large]
+  LatestUbuntuAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.20.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: aws-gap-check }]
+
+  Igw:
+    Type: AWS::EC2::InternetGateway
+  IgwAttach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: { VpcId: !Ref Vpc, InternetGatewayId: !Ref Igw }
+
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: aws-gap-check-public }]
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Vpc }
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IgwAttach
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref Igw
+  SubnetRouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref Subnet, RouteTableId: !Ref RouteTable }
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: aws-gap-check web (80 for certificate issuance and redirect, 443). No SSH.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0 }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0 }
+
+  AppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-gap-check-app-role
+      Description: aws-gap-check EC2 instance - assume customer read-only role, read two SSM parameters
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Session Manager로 접속해 사용자 생성·점검을 한다
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      Policies:
+        - PolicyName: aws-gap-check-app
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::*:role/AwsGapCheckReadOnlyRole"
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/aws-gap-check/gemini-api-key"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/aws-gap-check/duckdns-token"
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: { Roles: [!Ref AppRole] }
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestUbuntuAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      Monitoring: false
+      MetadataOptions:
+        HttpTokens: required
+        # 컨테이너 안의 앱이 인스턴스 Role을 쓰려면 홉이 2여야 한다
+        HttpPutResponseHopLimit: 2
+        HttpEndpoint: enabled
+      NetworkInterfaces:
+        - DeviceIndex: "0"
+          AssociatePublicIpAddress: true
+          SubnetId: !Ref Subnet
+          GroupSet: [!Ref SecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeType: gp3, VolumeSize: 30, Encrypted: true, DeleteOnTermination: true }
+      Tags: [{ Key: Name, Value: aws-gap-check }]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # 파라미터는 위에서 패턴으로 제한돼 있어 셸에 그대로 넣어도 안전하다. 비밀 값은 여기에 넣지 않는다.
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          REGION=${AWS::Region}
+          NAME=${DuckDnsSubdomain}
+
+          apt-get update
+          apt-get install -y docker.io docker-compose-v2 git curl
+          snap install aws-cli --classic
+          systemctl enable --now docker
+
+          # 부팅마다 DuckDNS에 현재 공인 IP를 등록한다(Elastic IP 없음). 토큰은 SSM에서 읽고 명령줄·로그에 남기지 않는다.
+          cat > /usr/local/bin/duckdns-update.sh <<'EOF'
+          #!/bin/bash
+          set -euo pipefail
+          . /etc/aws-gap-check.env
+          token=$(aws ssm get-parameter --region "$REGION" --name /aws-gap-check/duckdns-token \
+            --with-decryption --query Parameter.Value --output text)
+          printf 'url = "https://www.duckdns.org/update?domains=%s&token=%s&ip="\n' "$NAME" "$token" |
+            curl -sS --retry 5 --retry-delay 3 -K - -o /dev/null
+          EOF
+          chmod 700 /usr/local/bin/duckdns-update.sh
+          printf 'REGION=%s\nNAME=%s\n' "$REGION" "$NAME" > /etc/aws-gap-check.env
+          cat > /etc/systemd/system/duckdns-update.service <<'EOF'
+          [Unit]
+          Description=Register public IP with DuckDNS
+          Wants=network-online.target
+          After=network-online.target
+          Before=docker.service
+          [Service]
+          Type=oneshot
+          Environment=PATH=/snap/bin:/usr/local/bin:/usr/bin:/bin
+          ExecStart=/usr/local/bin/duckdns-update.sh
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          systemctl daemon-reload
+          systemctl enable duckdns-update.service
+          export PATH=$PATH:/snap/bin
+          /usr/local/bin/duckdns-update.sh
+
+          git clone https://github.com/KelpShake04/aws-gap-check.git /opt/aws-gap-check
+          cd /opt/aws-gap-check
+          git checkout ${RepoRef}
+          umask 077
+          cat > .env <<EOF
+          MYSQL_ROOT_PASSWORD=$(openssl rand -hex 16)
+          MYSQL_PASSWORD=$(openssl rand -hex 16)
+          SITE_ADDRESS=$NAME.duckdns.org
+          GEMINI_MODEL=${GeminiModel}
+          EOF
+          docker compose up -d --build
+
+Outputs:
+  SiteUrl:
+    Description: 5~10분 뒤 접속(처음에는 Prowler 이미지를 받느라 걸린다)
+    Value: !Sub "https://${DuckDnsSubdomain}.duckdns.org"
+  InstanceId:
+    Description: 콘솔의 Session Manager 연결 대상. 안 쓸 때는 중지
+    Value: !Ref Instance
