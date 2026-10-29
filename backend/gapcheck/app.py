@@ -59,7 +59,7 @@ def explainer_factory(env, store, ssm_client):
             if not cached["key"] and ssm_client is not None:
                 try:
                     cached["key"] = ssm_client().get_parameter(
-                        Name=env.get("GEMINI_PARAM", "/aws-gap-check/gemini-api-key"),
+                        Name=env.get("GEMINI_PARAM", "/gapcheck/gemini-api-key"),
                         WithDecryption=True)["Parameter"]["Value"]
                 except Exception as err:
                     logger.error("Gemini key unavailable: %s", type(err).__name__)

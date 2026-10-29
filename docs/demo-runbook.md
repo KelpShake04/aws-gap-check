@@ -66,7 +66,7 @@ SITE=$(aws cloudformation describe-stacks --stack-name aws-gap-check \
   --query "Stacks[0].Outputs[?OutputKey=='SiteBucketName'].OutputValue" --output text)
 aws s3 rm "s3://$RESULTS" --recursive && aws s3 rm "s3://$SITE" --recursive
 aws cloudformation delete-stack --stack-name aws-gap-check
-aws ssm delete-parameter --name /aws-gap-check/gemini-api-key
+aws ssm delete-parameter --name /gapcheck/gemini-api-key
 # 아티팩트 버킷은 직접 비우고 삭제: aws s3 rb s3://aws-gap-check-artifacts-<계정>-ap-northeast-2 --force
 ```
 
