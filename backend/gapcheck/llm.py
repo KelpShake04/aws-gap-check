@@ -37,6 +37,10 @@ class RateLimited(LLMError):
         self.retry_after = retry_after
 
 
+class TransientError(LLMError):
+    """5xx 응답이나 네트워크 오류(타임아웃 등). 잠시 뒤 다시 시도하면 될 수 있다."""
+
+
 class BlockedResponse(LLMError):
     """안전 필터 등으로 응답이 차단됨."""
 
@@ -107,9 +111,10 @@ def _send(request, api_key: str, timeout: float, opener) -> dict:
         if err.code == 429:
             raise RateLimited(_retry_after(error_body)) from None
         message = (error_body.get("error") or {}).get("message", "")
-        raise LLMError(_redact(f"HTTP {err.code}: {message}", api_key)) from None
+        error_class = TransientError if err.code >= 500 else LLMError
+        raise error_class(_redact(f"HTTP {err.code}: {message}", api_key)) from None
     except (urllib.error.URLError, OSError) as err:
-        raise LLMError(f"network error: {type(err).__name__}") from None
+        raise TransientError(f"network error: {type(err).__name__}") from None
     try:
         return json.loads(raw)
     except ValueError:
