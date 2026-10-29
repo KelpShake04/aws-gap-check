@@ -139,6 +139,18 @@ class ExplainTest(unittest.TestCase):
         self.assertEqual(explainer.explain(self.groups[0]), (GOOD, "cache"))
         self.assertEqual(len(generate.prompts), 1)
 
+    def test_stops_calling_after_consecutive_failures(self):
+        calls = []
+
+        def generate(system, user, schema):
+            calls.append(1)
+            raise llm.LLMError("HTTP 403")
+
+        explainer = self.explainer(generate)
+        sources = [explainer.explain(g)[1] for g in self.groups[:6]]
+        self.assertEqual(set(sources), {"prowler"})
+        self.assertEqual(len(calls), explain.MAX_CONSECUTIVE_FAILURES)
+
     def test_invalid_output_retries_once_then_falls_back(self):
         generate = Recorder({"summary": 1}, {"summary": 2})
         explanation, source = self.explainer(generate).explain(self.groups[0])

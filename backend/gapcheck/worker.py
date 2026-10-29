@@ -41,13 +41,13 @@ def run_prowler(inputs: dict, out_dir: pathlib.Path) -> None:
            if key in ("PATH", "HOME", "LANG") or key.startswith("AWS_")}
     try:
         process = subprocess.run(run_scan.prowler_command(inputs, str(out_dir)), check=False, env=env,
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                  timeout=PROWLER_TIMEOUT)
     except subprocess.TimeoutExpired:
         raise ScanError("스캔 시간이 초과되었습니다.") from None
     if process.returncode != 0:
         logger.error("prowler exited %d: %s", process.returncode,
-                     process.stderr.decode("utf-8", "replace")[-500:])
+                     process.stdout.decode("utf-8", "replace")[-500:])
         raise ScanError(SCAN_FAILED)
 
 

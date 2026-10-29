@@ -81,7 +81,7 @@ EC2에서는 `.env`에 `DEMO_FIXTURE`를 넣지 않는다. 그러면 앱이 인�
    ```bash
    read -rs T; aws ssm put-parameter --name /aws-gap-check/duckdns-token --type SecureString --value "$T"; unset T
    ```
-   Gemini 키는 `docs/deploy.md` 1단계와 같다(`/aws-gap-check/gemini-api-key`).
+   Gemini 키도 같은 방식으로 `/aws-gap-check/gemini-api-key`에 저장한다.
 2. 로컬 실행용 스택 `aws-gap-check-local-app-role`이 있으면 먼저 지운다(Role 이름이 같다).
 3. CloudFormation 콘솔에서 `infra/ec2.yaml`로 스택을 만든다. 파라미터는 `DuckDnsSubdomain`, `GeminiModel`. 마지막 화면의 IAM 확인란을 체크한다.
 4. 5~10분 뒤 출력의 `SiteUrl`로 접속한다. EC2 콘솔 **Session Manager 연결** 후 `cd /opt/aws-gap-check && sudo docker compose exec app python -m gapcheck.cli create-user <이메일>`.
@@ -105,7 +105,7 @@ python3 -m unittest                # DB·scrypt가 필요한 테스트는 건너
 - **스키마**: `utf8mb4`, 사용자 데이터 테이블은 모두 `user_id`가 기본 키 앞자리. 외래키로 사용자 삭제 시 함께 삭제, 결과는 스캔 삭제 시 함께 삭제. 스캔 큐는 `(status, id)` 인덱스.
 - **작업자**: 스레드 하나. 스캔 시작 요청이 깨우고, 아니면 30초마다 확인. 서버가 재시작되면 진행 중이던 스캔은 실패로 표시.
 - **TLS**: caddy가 맡는다(앱은 HTTP만, 외부에 포트를 열지 않음).
-- **서버리스 코드**: 지우지 않고 그대로 둔다(`backend/handlers`, `infra/service.yaml`). 공용 로직(`scans.create`, `results.store_and_explain`, `views.py`)은 두 구성이 같이 쓴다. 다만 프런트엔드는 컨테이너 로그인으로 바뀌어 서버리스 배포 경로는 더 이상 맞지 않는다. 정리(`legacy/`로 이동 또는 삭제)는 따로 한다.
+- **서버리스 코드**: 지우지 않고 `legacy/serverless/`로 옮겨 두었다(`handlers`, `infra/service.yaml` 등, 설명은 그 폴더의 README). 공용 로직(`scans.create`, `results.store_and_explain`, `views.py`)은 두 구성이 같이 쓴다. 다만 프런트엔드는 컨테이너 로그인으로 바뀌어 서버리스 배포 경로는 더 이상 맞지 않는다. 
 
 ## 알려진 한계
 
