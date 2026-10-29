@@ -1,6 +1,6 @@
 # 컨테이너 버전 실행 안내
 
-설계: `docs/superpowers/specs/2026-10-28-container-redesign.md`. 이 문서는 지금 구현된 것을 로컬에서 띄우고 확인하는 방법이다. EC2 배포 템플릿(`infra/ec2.yaml`)은 아직 없다(12주차 예정).
+설계: `docs/superpowers/specs/2026-10-28-container-redesign.md`. 이 문서는 지금 구현된 것을 로컬에서 띄우고 확인하는 방법이다. EC2 배포는 `infra/ec2.yaml`(아래 "실제 스캔 (EC2)").
 
 ## 구성
 
@@ -73,7 +73,21 @@ MySQL 스키마를 바꾸면 `docker compose down -v`로 볼륨을 지워야 새
 
 ## 실제 스캔 (EC2)
 
-EC2에서는 `.env`에 `DEMO_FIXTURE`를 넣지 않는다. 그러면 앱이 인스턴스 Role(`aws-gap-check-app-role`)로 고객 계정의 `AwsGapCheckReadOnlyRole`을 `ExternalId`와 함께 맡아 Prowler를 실행한다. 고객 템플릿 `infra/customer-role.yaml`은 이 Role을 허용하도록 바꿔 두었다. AI 해설을 쓰려면 `.env`에 `GEMINI_MODEL=<모델 이름>`을 넣고 키를 SSM `/aws-gap-check/gemini-api-key`에 둔다. 템플릿과 user data는 다음 단계에서 만든다.
+EC2에서는 `.env`에 `DEMO_FIXTURE`를 넣지 않는다. 그러면 앱이 인스턴스 Role(`aws-gap-check-app-role`)로 고객 계정의 `AwsGapCheckReadOnlyRole`을 `ExternalId`와 함께 맡아 Prowler를 실행한다. 고객 템플릿 `infra/customer-role.yaml`은 이 Role을 허용하도록 바꿔 두었다. AI 해설을 쓰려면 `.env`에 `GEMINI_MODEL=<모델 이름>`을 넣고 키를 SSM `/aws-gap-check/gemini-api-key`에 둔다. 
+
+배포 순서(템플릿은 `cfn-lint`와 user data 셸 문법만 확인했고, 실제 스택 생성은 아직 실행하지 않았다):
+
+1. [duckdns.org](https://www.duckdns.org)에서 서브도메인을 만든다. CloudShell에서 토큰과 Gemini 키를 SSM에 저장한다.
+   ```bash
+   read -rs T; aws ssm put-parameter --name /aws-gap-check/duckdns-token --type SecureString --value "$T"; unset T
+   ```
+   Gemini 키는 `docs/deploy.md` 1단계와 같다(`/aws-gap-check/gemini-api-key`).
+2. 로컬 실행용 스택 `aws-gap-check-local-app-role`이 있으면 먼저 지운다(Role 이름이 같다).
+3. CloudFormation 콘솔에서 `infra/ec2.yaml`로 스택을 만든다. 파라미터는 `DuckDnsSubdomain`, `GeminiModel`. 마지막 화면의 IAM 확인란을 체크한다.
+4. 5~10분 뒤 출력의 `SiteUrl`로 접속한다. EC2 콘솔 **Session Manager 연결** 후 `cd /opt/aws-gap-check && sudo docker compose exec app python -m gapcheck.cli create-user <이메일>`.
+5. 안 쓸 때는 인스턴스를 **중지**한다. 재시작하면 부팅 때 DuckDNS에 새 IP를 등록한다.
+
+user data 로그는 `/var/log/cloud-init-output.log`.
 
 ## 테스트
 
