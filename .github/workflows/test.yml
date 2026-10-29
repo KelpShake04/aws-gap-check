@@ -21,13 +21,34 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # DB 테스트용 MySQL(운영과 같은 8.4.9). 스키마는 아래 단계에서 root로 적용한다
+    services:
+      mysql:
+        image: mysql:8.4.9
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root
+          MYSQL_DATABASE: gapcheck
+          MYSQL_USER: gapcheck
+          MYSQL_PASSWORD: ci-test
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      # 표준 라이브러리만 쓰므로 설치할 패키지가 없다
+      # 앱의 유일한 추가 의존성(PyMySQL)만 해시를 확인해 설치한다
+      - name: install
+        run: pip install --require-hashes --no-deps -r requirements.txt
+      - name: apply schema
+        run: mysql -h 127.0.0.1 -uroot -pci-root gapcheck < db/init/01-schema.sql
       - name: unittest
+        env:
+          TEST_DB_HOST: 127.0.0.1
+          TEST_DB_PORT: "3306"
+          TEST_DB_PASSWORD: ci-test
         run: python -m unittest -v
       # 템플릿 검증용 개발 도구. 런타임 의존성이 아니다. unittest가 실패해도 실행한다
       - name: cfn-lint
