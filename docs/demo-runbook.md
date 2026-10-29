@@ -63,8 +63,8 @@ aws cloudformation delete-stack --stack-name aws-gap-check-readonly-role
 
 ```bash
 aws cloudformation delete-stack --stack-name <EC2 스택 이름>      # EC2, VPC, 인스턴스 Role 포함
-aws ssm delete-parameter --name /aws-gap-check/gemini-api-key
-aws ssm delete-parameter --name /aws-gap-check/duckdns-token
+aws ssm delete-parameter --name /gapcheck/gemini-api-key
+aws ssm delete-parameter --name /gapcheck/duckdns-token
 # 로컬 실행용으로 만든 것이 남아 있으면:
 aws cloudformation delete-stack --stack-name aws-gap-check-local-app-role
 # IAM 사용자 aws-gap-check-local의 액세스 키 삭제 후 사용자 삭제
