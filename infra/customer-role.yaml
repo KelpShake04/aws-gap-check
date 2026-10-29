@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  aws-gap-check read-only scan role. Only the aws-gap-check service's scanner and API
-  roles can assume it, and only with the ExternalId issued to this connection.
+  aws-gap-check read-only scan role. Only the aws-gap-check service's app (or legacy
+  scanner/API) roles can assume it, and only with the ExternalId issued to this connection.
 
 # 고객(테스트) 계정에서 실행하는 템플릿. 쓰기 권한은 주지 않는다.
 # Role 이름이 고정이라 콘솔에서 "IAM 리소스 이름 지정(CAPABILITY_NAMED_IAM)" 확인이 필요하다.
@@ -37,9 +37,10 @@ Resources:
               # confused deputy 방지: 서비스가 이 연결에 발급한 값만 통과
               StringEquals:
                 sts:ExternalId: !Ref ExternalId
-              # 서비스 계정 안에서도 스캐너와 API 역할만 허용
+              # 서비스 계정 안에서도 앱 서버(EC2 인스턴스 Role)만 허용. 아래 두 개는 이전 서버리스 구성용
               ArnEquals:
                 aws:PrincipalArn:
+                  - !Sub "arn:${AWS::Partition}:iam::${ServiceAccountId}:role/aws-gap-check-app-role"
                   - !Sub "arn:${AWS::Partition}:iam::${ServiceAccountId}:role/aws-gap-check-scanner-role"
                   - !Sub "arn:${AWS::Partition}:iam::${ServiceAccountId}:role/aws-gap-check-api-role"
       ManagedPolicyArns:

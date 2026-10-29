@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from gapcheck import explain, findings, ids, llm
+from gapcheck import explain, ids, llm, results
 from gapcheck.common import iso, utcnow
 
 logger = logging.getLogger()
@@ -81,19 +81,10 @@ def _process(deps: Deps, sub: str, scan: dict, remaining_ms: Callable) -> None:
     obj = deps.s3.get_object(Bucket=deps.bucket, Key=f"raw/{sub}/{scan_id}/prowler.ocsf.json")
     if obj.get("ContentLength", 0) > MAX_RESULT_BYTES:
         raise ValueError("result too large")
-    groups, counts = findings.parse(json.loads(obj["Body"].read()))
-    for group in groups:
-        group["explanation"], group["explainSource"] = None, "pending"
-    deps.store.put_findings(sub, scan_id, groups, scan["expiresAt"])
-    _update(deps, sub, scan_id, status="EXPLAINING", counts=counts)
-
     explainer = deps.make_explainer(remaining_ms)
-    for group in groups:
-        group["explanation"], group["explainSource"] = explainer.explain(group)
-        deps.store.put_finding(sub, scan_id, group, scan["expiresAt"])
-    summary = explainer.summarize(groups)
-    _update(deps, sub, scan_id, status="DONE", summary=summary)
-    logger.info("scan %s done: %d checks, %d model calls", scan_id, len(groups), explainer.calls)
+    checks = results.store_and_explain(deps.store, explainer, sub, scan,
+                                       json.loads(obj["Body"].read()), deps.now)
+    logger.info("scan %s done: %d checks, %d model calls", scan_id, checks, explainer.calls)
 
 
 def _update(deps: Deps, sub: str, scan_id: str, **fields) -> None:

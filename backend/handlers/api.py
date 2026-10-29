@@ -12,13 +12,12 @@ from typing import Any, Callable
 
 from gapcheck import connections, ids, scans
 from gapcheck.common import ApiError, BadRequest, utcnow
+from gapcheck.views import conn_view, finding_view, scan_view, setup_info
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 MAX_BODY_BYTES = 16 * 1024
-TEMPLATE_PATH = "/customer-role.yaml"
-STACK_NAME = "aws-gap-check-readonly-role"
 
 
 @dataclass
@@ -32,28 +31,6 @@ class Deps:
     service_account_id: str
     daily_limit: int
     now: Callable = utcnow
-
-
-def conn_view(conn: dict) -> dict:
-    return {key: conn.get(key) for key in
-            ("id", "accountId", "status", "message", "externalId", "createdAt", "verifiedAt")}
-
-
-def scan_view(scan: dict) -> dict:
-    return {key: scan.get(key) for key in
-            ("id", "connectionId", "accountId", "status", "counts", "summary", "error",
-             "createdAt", "updatedAt")}
-
-
-FINDING_FIELDS = ("checkId", "title", "severity", "service", "resourceType", "description", "risk",
-                  "recommendation", "references", "resources", "regions", "totalCount",
-                  "explanation", "explainSource")
-
-
-def setup_info(deps) -> dict:
-    """고객 계정에서 템플릿을 배포할 때 필요한 값. ExternalId는 연결마다 따로 있다."""
-    return {"serviceAccountId": deps.service_account_id, "roleName": ids.ROLE_NAME,
-            "stackName": STACK_NAME, "templatePath": TEMPLATE_PATH}
 
 
 def create_connection(deps, sub, params, body):
@@ -92,7 +69,7 @@ def get_scan(deps, sub, params, body):
     scan = scans.get(deps.store, sub, params.get("id", ""))
     groups = deps.store.list_findings(sub, scan["id"])
     return 200, {"scan": scan_view(scan),
-                 "findings": [{k: g.get(k) for k in FINDING_FIELDS} for g in groups]}
+                 "findings": [finding_view(g) for g in groups]}
 
 
 def delete_scan(deps, sub, params, body):

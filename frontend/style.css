@@ -4,6 +4,7 @@
   --critical: #8e1b1b; --high: #d4380d; --medium: #d48806; --low: #3b7dd8; --info: #7a869a;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; font-family: system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   background: var(--bg); color: var(--fg); line-height: 1.55; }
 .top { display: flex; align-items: center; justify-content: space-between; gap: 16px;
@@ -30,6 +31,8 @@ button.danger { background: #fff; color: var(--danger); border-color: var(--dang
 button.link { background: none; border: none; color: var(--accent); padding: 0 4px; }
 input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
 form.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+form.stack { display: grid; gap: 10px; max-width: 360px; margin: 16px 0 8px; }
+form.stack label { display: grid; gap: 4px; }
 table.list { width: 100%; border-collapse: collapse; background: var(--card); margin-top: 16px; }
 table.list th, table.list td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 td.actions { display: flex; gap: 8px; justify-content: flex-end; }

@@ -1,0 +1,12 @@
+# HTTPS 종료와 앱 연결. SITE_ADDRESS가 <이름>.duckdns.org면 Let's Encrypt 인증서를 자동으로 받고(HTTP-01, 80 포트),
+# localhost면 Caddy 내부 인증서를 쓴다(브라우저 경고는 시연용으로 허용).
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# localhost에 HSTS를 걸면 다른 로컬 개발 서버까지 https로 강제되므로 도메인일 때만 보낸다
+	@domain not host localhost 127.0.0.1
+	header @domain Strict-Transport-Security "max-age=31536000"
+	header -Server
+
+	reverse_proxy app:8080
+}

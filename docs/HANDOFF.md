@@ -20,7 +20,12 @@ AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국�
 - 평가 기준(IaC 필수 여부, 시연 시간), 비용 상한, 조원 참여 여부.
 - 서비스를 배포할 AWS 계정과 배포 권한(CI에서 쓸지, 사용자가 로컬에서 배포할지).
 
-## 현재 상태 (2026-10-28)
+## 현재 상태 (2026-10-29, 컨테이너 버전 초안)
+- 배포 구조를 EC2 한 대 + Docker Compose(app, mysql, caddy)로 바꾸는 설계(`docs/superpowers/specs/2026-10-28-container-redesign.md`)대로 **앱 초안을 구현**했다. 실행·구조·한계는 `docs/container.md`, ERD는 `docs/erd.md`.
+- 로컬에서 확인한 것: 앱 이미지 안에서 전체 테스트 통과(실제 MySQL 8.4.9 포함), `docker compose up` 후 데모 모드로 로그인 → 비밀번호 변경 → 연결 → 스캔 → 리포트 → 삭제 → 로그아웃(HTTPS, headless Chrome 화면 확인), Prowler 5.46이 스캔 인자를 받는 것(자격 증명 단계까지).
+- 아직 안 한 것: EC2 템플릿(`infra/ec2.yaml`)과 user data, 실제 AWS 계정 스캔, Gemini 실제 호출, CI(GitHub Actions), 서버리스 코드 정리.
+
+## 이전 상태 (2026-10-28, 서버리스 버전)
 - 구현 계획 승인됨: `docs/superpowers/plans/2026-10-28-aws-gap-check-implementation.md`(D1~D8 제안대로).
 - **배포 직전까지 코드 완성**(PR #3): 백엔드(`backend/gapcheck`, `backend/handlers`), 전체 스택 템플릿(`infra/service.yaml`, cfn-lint 통과), 고객 Role 템플릿, 스캐너, 프런트엔드(`frontend/`, Chromium 렌더링 확인), 배포·사용자 생성 스크립트, 발표 문서(`docs/architecture.md`, `docs/security-design.md`, `docs/demo-runbook.md`). unittest 전체 통과.
 - **아직 실제 AWS에서 확인한 것은 없다.** 다음은 사용자가 `docs/deploy.md` 1~6단계를 실행하고 7단계 양식으로 결과를 남기는 것. 문제가 나오면 로그를 들고 다음 세션에서 고친다.

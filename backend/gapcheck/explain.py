@@ -7,6 +7,7 @@ Gemini에는 Prowler 점검 메타데이터(제목, 설명, 위험, 권장 조�
 from __future__ import annotations
 
 import json
+import re
 import time
 
 from . import llm
@@ -78,13 +79,23 @@ def summary_input(groups: list) -> list:
              "affected_resources": g["totalCount"]} for g in groups]
 
 
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_MD_MARKS = re.compile(r"\*\*|__|`")
+
+
+def plain_text(text: str) -> str:
+    """Prowler 원문의 마크다운 기호(굵게, 코드, 링크)를 지운다. 화면은 글자로만 보여 주기 때문이다."""
+    return _MD_MARKS.sub("", _MD_LINK.sub(r"\1", text))
+
+
 def fallback_explanation(group: dict) -> dict:
     """AI 해설이 실패했을 때 보여 줄 Prowler 원문(영어)."""
+    recommendation = plain_text(group["recommendation"])
     return {
-        "summary": group["title"][:80],
-        "risk": group["risk"][:400],
+        "summary": plain_text(group["title"])[:80],
+        "risk": plain_text(group["risk"])[:400],
         "impact": "",
-        "steps": [group["recommendation"][:200]] if group["recommendation"] else [],
+        "steps": [recommendation[:200]] if recommendation else [],
     }
 
 

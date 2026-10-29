@@ -10,7 +10,7 @@ const STATUS = {
 };
 const FINAL = ["DONE", "FAILED"];
 const main = document.getElementById("main");
-let config;
+let user;
 let api;
 let pollTimer;
 
@@ -64,14 +64,61 @@ function showError(err) {
     h("button", { type: "button", onclick: route }, "다시 시도")));
 }
 
-// ---------- 로그인 전 ----------
+// ---------- 로그인 ----------
 function landing() {
+  clearTimeout(pollTimer);
   document.getElementById("nav").hidden = true;
+  const email = h("input", { type: "email", name: "email", autocomplete: "username", required: true, maxlength: "254" });
+  const password = h("input", { type: "password", name: "password", autocomplete: "current-password", required: true, maxlength: "128" });
+  const result = h("p", { class: "small error-text" });
   render(h("section", { class: "card hero" },
     h("h1", {}, "AWS 계정 빈틈 점검"),
     h("p", {}, "계정을 읽기 전용으로 연결하면 Prowler로 설정상 빈틈을 점검하고, AI가 무엇이 왜 위험한지와 고치는 순서를 한국어로 설명합니다."),
     h("p", { class: "small muted" }, "액세스 키는 받지 않습니다. 연결은 고객 계정의 읽기 전용 Role과 ExternalId로만 합니다."),
-    h("button", { type: "button", onclick: () => auth.login(config) }, "로그인")));
+    h("form", {
+      class: "stack",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        result.textContent = "";
+        try {
+          await auth.login(api, email.value, password.value);
+          await start();
+        } catch (err) {
+          result.textContent = err.message;
+        }
+      },
+    }, h("label", {}, "이메일 ", email), h("label", {}, "비밀번호 ", password),
+    h("button", { type: "submit" }, "로그인"), result),
+    h("p", { class: "small muted" }, "계정은 관리자가 만들어 드립니다(셀프 가입 없음).")));
+}
+
+function passwordView() {
+  clearTimeout(pollTimer);
+  const current = h("input", { type: "password", autocomplete: "current-password", required: true, maxlength: "128" });
+  const next = h("input", { type: "password", autocomplete: "new-password", required: true, minlength: "10", maxlength: "128" });
+  const again = h("input", { type: "password", autocomplete: "new-password", required: true, minlength: "10", maxlength: "128" });
+  const result = h("p", { class: "small error-text" });
+  render(h("section", { class: "card" },
+    h("h1", {}, "비밀번호 바꾸기"),
+    user.mustChangePassword ? h("p", {}, "처음 로그인했습니다. 임시 비밀번호를 새 비밀번호(10자 이상)로 바꿔야 쓸 수 있습니다.") : null,
+    h("form", {
+      class: "stack",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        if (next.value !== again.value) {
+          result.textContent = "새 비밀번호 두 칸이 서로 다릅니다.";
+          return;
+        }
+        try {
+          await auth.changePassword(api, current.value, next.value);
+          history.replaceState(null, "", "#/scans");
+          await start();
+        } catch (err) {
+          result.textContent = err.message;
+        }
+      },
+    }, h("label", {}, "현재(임시) 비밀번호 ", current), h("label", {}, "새 비밀번호 ", next),
+    h("label", {}, "새 비밀번호 확인 ", again), h("button", { type: "submit" }, "바꾸기"), result)));
 }
 
 // ---------- 계정 연결 ----------
@@ -103,7 +150,7 @@ async function createConnection() {
 }
 
 function showSetup(conn, setup) {
-  const consoleUrl = `https://console.aws.amazon.com/cloudformation/home?region=${config.region}#/stacks/create`;
+  const consoleUrl = `https://console.aws.amazon.com/cloudformation/home?region=${user.region}#/stacks/create`;
   const input = h("input", {
     name: "accountId", inputmode: "numeric", pattern: "[0-9]{12}", maxlength: "12",
     required: true, placeholder: "12자리 계정 ID", value: conn.accountId || "",
@@ -282,6 +329,7 @@ async function route() {
   try {
     if (hash.startsWith("#/scans/")) await reportView(decodeURIComponent(hash.slice("#/scans/".length)));
     else if (hash === "#/connections") await connectionsView();
+    else if (hash === "#/password") passwordView();
     else await scansView();
   } catch (err) {
     showError(err);
@@ -290,26 +338,25 @@ async function route() {
 
 async function start() {
   try {
-    config = await (await fetch("config.json", { cache: "no-store" })).json();
-  } catch {
-    render(h("p", { class: "error-text" }, "설정 파일(config.json)을 읽지 못했습니다."));
-    return;
-  }
-  try {
-    await auth.handleCallback(config);
+    user = await auth.me(api);
   } catch (err) {
-    render(h("p", { class: "error-text" }, err.message));
-  }
-  if (!auth.session()) {
-    landing();
+    if (err.status !== 401) showError(err);
     return;
   }
-  api = createApi(config, landing);
   document.getElementById("nav").hidden = false;
-  document.getElementById("user").textContent = auth.userEmail();
-  document.getElementById("logout").addEventListener("click", () => auth.logout(config));
-  window.addEventListener("hashchange", route);
+  document.getElementById("user").textContent = user.demo ? `${user.email} (데모 모드)` : user.email;
+  if (user.mustChangePassword) {
+    passwordView();
+    return;
+  }
   await route();
 }
 
+api = createApi(landing);
+window.addEventListener("hashchange", () => user && !user.mustChangePassword && route());
+document.getElementById("logout").addEventListener("click", async () => {
+  await auth.logout(api).catch(() => {});
+  user = undefined;
+  landing();
+});
 start();
