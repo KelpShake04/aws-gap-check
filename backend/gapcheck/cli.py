@@ -16,11 +16,22 @@ def main(argv=None, store=None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     create = commands.add_parser("create-user", help="사용자를 만들고 임시 비밀번호를 출력한다")
     create.add_argument("email")
+    reset = commands.add_parser("reset-password", help="임시 비밀번호로 바꾸고 잠금·세션을 푼다")
+    reset.add_argument("email")
     args = parser.parse_args(argv)
 
     if store is None:
         from .app import store_from_env
         store = store_from_env()
+    if args.command == "reset-password":
+        user = store.get_user_by_email(auth.normalize_email(args.email))
+        if not user:
+            print("없는 이메일입니다.", file=sys.stderr)
+            return 1
+        password = auth.reset_password(store, user["id"])
+        print(f"임시 비밀번호: {password}")
+        print("다음 로그인 때 새 비밀번호로 바꿔야 합니다. 기존 로그인은 모두 끊겼습니다.")
+        return 0
     if store.get_user_by_email(auth.normalize_email(args.email)):
         print("이미 있는 이메일입니다.", file=sys.stderr)
         return 1

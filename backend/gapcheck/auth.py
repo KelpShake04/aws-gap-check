@@ -80,6 +80,15 @@ def create_user(store, email: str, now: datetime):
     return user, password
 
 
+def reset_password(store, user_id: str) -> str:
+    """관리자용: 임시 비밀번호로 바꾸고 잠금을 풀고 모든 세션을 끊는다. 임시 비밀번호를 돌려준다."""
+    password = secrets.token_urlsafe(12)
+    store.update_user(user_id, {"passwordHash": hash_password(password), "mustChangePassword": True,
+                                "failedLogins": 0, "lockedUntil": None})
+    store.delete_user_sessions(user_id)
+    return password
+
+
 def login(store, email, password, now: datetime):
     """(세션 토큰, user)를 돌려준다. 실패는 모두 같은 Unauthorized다."""
     email = normalize_email(email)

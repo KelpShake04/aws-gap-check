@@ -125,6 +125,14 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(anon.request("POST", "/api/login",
                                       {"email": "alice@example.com", "password": NEW_PASSWORD})[0], 200)
 
+    def test_reset_password_unlocks_and_ends_sessions(self):
+        client, user = self.user()
+        temp = auth.reset_password(self.store, user["id"])
+        self.assertEqual(client.request("GET", "/api/me")[0], 401)
+        status, body = Client(self.port).request("POST", "/api/login",
+                                                 {"email": "alice@example.com", "password": temp})
+        self.assertEqual((status, body["mustChangePassword"]), (200, True))
+
     def test_bad_login_inputs(self):
         anon = Client(self.port)
         for body in ({}, {"email": 1, "password": None}, {"email": "a@b.c", "password": "x" * 1000}):
