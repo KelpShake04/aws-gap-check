@@ -19,8 +19,10 @@ logger = logging.getLogger(__name__)
 PROMPT_VERSION = "v1"
 MIN_REMAINING_MS = 60_000
 MAX_RETRY_WAIT = 60
-# 5xx·타임아웃은 이만큼 기다렸다가 한 번 더 시도한다(구글 쪽 일시 과부하 대응)
+# 5xx·타임아웃은 10초, 20초를 기다리며 최대 3번 시도하고, 그래도 안 되면 보조 모델을 한 번 시도한다
+# (구글 쪽 일시 과부하 대응)
 TRANSIENT_WAIT = 10
+TRANSIENT_ATTEMPTS = 3
 # 연속으로 이만큼 실패하면(키·모델 오류, 한도 소진) 이 스캔의 남은 호출은 건너뛰고 바로 폴백한다
 MAX_CONSECUTIVE_FAILURES = 3
 
@@ -110,11 +112,13 @@ class Explainer:
     """generate(system, user, schema) -> dict 를 감싸 캐시, 호출 간격, 재시도, 시간 예산을 처리한다.
 
     generate가 None이면(키나 모델 설정이 없으면) 모두 폴백한다.
+    fallback_generate는 주 모델이 과부하로 계속 실패할 때만 쓰는 보조 모델 호출이다.
     """
 
-    def __init__(self, generate=None, cache=None, *, model: str = "", max_rpm: int = 10,
+    def __init__(self, generate=None, cache=None, *, fallback_generate=None, model: str = "", max_rpm: int = 10,
                  remaining_ms=lambda: 10 ** 9, clock=time.monotonic, sleep=time.sleep):
         self.generate = generate
+        self.fallback_generate = fallback_generate
         self.cache = cache
         self.model = model
         self.interval = 60.0 / max(1, max_rpm)
@@ -153,7 +157,7 @@ class Explainer:
     def _call(self, system: str, user: str, schema: dict):
         if self.generate is None or self._failures >= MAX_CONSECUTIVE_FAILURES:
             return None
-        for attempt in range(2):
+        for attempt in range(TRANSIENT_ATTEMPTS):
             if self.remaining_ms() < MIN_REMAINING_MS:
                 return None
             self._pace()
@@ -164,25 +168,38 @@ class Explainer:
                 return result
             except llm.RateLimited as err:
                 wait = err.retry_after if err.retry_after is not None else self.interval
-                if attempt or wait > MAX_RETRY_WAIT:
+                if attempt >= 1 or wait > MAX_RETRY_WAIT:
                     logger.warning("explanation fell back: rate limited")
                     self._failures += 1
                     return None
                 self.sleep(wait)
             except (llm.InvalidResponse, ValidationError) as err:
-                if attempt:
+                if attempt >= 1:
                     logger.warning("explanation fell back: %s", type(err).__name__)
                     return None
             except llm.TransientError as err:
-                if attempt:
-                    logger.warning("explanation fell back: %s", err)
-                    self._failures += 1
-                    return None
-                self.sleep(TRANSIENT_WAIT)
+                if attempt == TRANSIENT_ATTEMPTS - 1:
+                    return self._call_fallback(system, user, schema, err)
+                self.sleep(TRANSIENT_WAIT * (attempt + 1))
             except llm.LLMError as err:
                 logger.warning("explanation fell back: %s", err)
                 self._failures += 1
                 return None
+        return None
+
+    def _call_fallback(self, system: str, user: str, schema: dict, primary_err):
+        if self.fallback_generate is not None and self.remaining_ms() >= MIN_REMAINING_MS:
+            self._pace()
+            try:
+                self.calls += 1
+                result = validate(self.fallback_generate(system, user, schema), schema)
+                logger.warning("primary model failed (%s); fallback model answered", primary_err)
+                self._failures = 0
+                return result
+            except (llm.LLMError, ValidationError) as err:
+                logger.warning("fallback model failed: %s", err)
+        logger.warning("explanation fell back: %s", primary_err)
+        self._failures += 1
         return None
 
     def _pace(self):

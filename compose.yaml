@@ -40,6 +40,8 @@ services:
       AWS_DEFAULT_REGION: ap-northeast-2
       # 비우면 AI 해설 없이 Prowler 원문을 보여 준다. 키는 SSM /gapcheck/gemini-api-key에서 읽는다.
       GEMINI_MODEL: ${GEMINI_MODEL:-}
+      # 주 모델이 503·타임아웃으로 계속 실패할 때만 쓰는 보조 모델. 비우면 쓰지 않는다.
+      GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL:-}
       DAILY_SCAN_LIMIT: ${DAILY_SCAN_LIMIT:-10}
       # 데모 모드: /app/demo/ocsf-sample.json을 넣으면 AWS 없이 화면 흐름을 보여 준다(계정 검증을 건너뜀)
       DEMO_FIXTURE: ${DEMO_FIXTURE:-}

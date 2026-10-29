@@ -117,8 +117,8 @@ class ExplainTest(unittest.TestCase):
         self.groups, _ = fixture_groups()
         self.sleeps = []
 
-    def explainer(self, generate, cache=None, remaining=10 ** 9):
-        return explain.Explainer(generate, cache, model="m", max_rpm=60,
+    def explainer(self, generate, cache=None, remaining=10 ** 9, fallback=None):
+        return explain.Explainer(generate, cache, fallback_generate=fallback, model="m", max_rpm=60,
                                  remaining_ms=lambda: remaining, clock=lambda: 0.0,
                                  sleep=self.sleeps.append)
 
@@ -139,15 +139,36 @@ class ExplainTest(unittest.TestCase):
         self.assertEqual(explainer.explain(self.groups[0]), (GOOD, "cache"))
         self.assertEqual(len(generate.prompts), 1)
 
-    def test_transient_error_is_retried_once(self):
-        generate = Recorder(llm.TransientError("HTTP 503"), GOOD)
+    def test_transient_error_is_retried(self):
+        generate = Recorder(llm.TransientError("HTTP 503"), llm.TransientError("HTTP 503"), GOOD)
         self.assertEqual(self.explainer(generate).explain(self.groups[0]), (GOOD, "gemini"))
-        self.assertEqual(len(generate.prompts), 2)
-        self.assertIn(explain.TRANSIENT_WAIT, self.sleeps)
+        self.assertEqual(len(generate.prompts), 3)
+        self.assertEqual([s for s in self.sleeps if s >= explain.TRANSIENT_WAIT],
+                         [explain.TRANSIENT_WAIT, explain.TRANSIENT_WAIT * 2])
 
-    def test_transient_error_twice_falls_back(self):
-        generate = Recorder(llm.TransientError("HTTP 503"), llm.TransientError("HTTP 503"))
+    def test_transient_error_every_time_falls_back(self):
+        errors = [llm.TransientError("HTTP 503")] * explain.TRANSIENT_ATTEMPTS
+        generate = Recorder(*errors)
         self.assertEqual(self.explainer(generate).explain(self.groups[0])[1], "prowler")
+        self.assertEqual(len(generate.prompts), explain.TRANSIENT_ATTEMPTS)
+
+    def test_fallback_model_answers_after_primary_keeps_failing(self):
+        generate = Recorder(*[llm.TransientError("HTTP 503")] * explain.TRANSIENT_ATTEMPTS)
+        fallback = Recorder()
+        explainer = self.explainer(generate, fallback=fallback)
+        self.assertEqual(explainer.explain(self.groups[0]), (GOOD, "gemini"))
+        self.assertEqual(len(fallback.prompts), 1)
+
+    def test_fallback_model_failure_falls_back_to_prowler(self):
+        generate = Recorder(*[llm.TransientError("HTTP 503")] * explain.TRANSIENT_ATTEMPTS)
+        fallback = Recorder(llm.TransientError("HTTP 503"))
+        self.assertEqual(self.explainer(generate, fallback=fallback).explain(self.groups[0])[1], "prowler")
+
+    def test_fallback_model_not_used_for_non_transient_error(self):
+        generate = Recorder(llm.LLMError("HTTP 403"))
+        fallback = Recorder()
+        self.assertEqual(self.explainer(generate, fallback=fallback).explain(self.groups[0])[1], "prowler")
+        self.assertEqual(fallback.prompts, [])
 
     def test_stops_calling_after_consecutive_failures(self):
         calls = []

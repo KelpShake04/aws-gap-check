@@ -73,7 +73,7 @@ MySQL 스키마를 바꾸면 `docker compose down -v`로 볼륨을 지워야 새
 
 ## 실제 스캔 (EC2)
 
-EC2에서는 `.env`에 `DEMO_FIXTURE`를 넣지 않는다. 그러면 앱이 인스턴스 Role(`aws-gap-check-app-role`)로 고객 계정의 `AwsGapCheckReadOnlyRole`을 `ExternalId`와 함께 맡아 Prowler를 실행한다. 고객 템플릿 `infra/customer-role.yaml`은 이 Role을 허용하도록 바꿔 두었다. AI 해설을 쓰려면 `.env`에 `GEMINI_MODEL=<모델 이름>`을 넣고 키를 SSM `/gapcheck/gemini-api-key`에 둔다. 
+EC2에서는 `.env`에 `DEMO_FIXTURE`를 넣지 않는다. 그러면 앱이 인스턴스 Role(`aws-gap-check-app-role`)로 고객 계정의 `AwsGapCheckReadOnlyRole`을 `ExternalId`와 함께 맡아 Prowler를 실행한다. 고객 템플릿 `infra/customer-role.yaml`은 이 Role을 허용하도록 바꿔 두었다. AI 해설을 쓰려면 `.env`에 `GEMINI_MODEL=<모델 이름>`을 넣고 키를 SSM `/gapcheck/gemini-api-key`에 둔다. 주 모델이 503·타임아웃으로 3번(10초, 20초 간격) 실패하면 `GEMINI_FALLBACK_MODEL`(선택)의 보조 모델을 한 번 시도한다. 
 
 배포 순서(템플릿은 `cfn-lint`와 user data 셸 문법만 확인했고, 실제 스택 생성은 아직 실행하지 않았다):
 
