@@ -20,7 +20,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -35,3 +35,7 @@ jobs:
         run: |
           pip install cfn-lint==1.58.0
           cfn-lint infra/*.yaml
+      # Dockerfile이 깨지지 않았는지 확인(Prowler 이미지를 받아서 몇 분 걸린다)
+      - name: docker build
+        if: success() || failure()
+        run: docker build -t aws-gap-check-app .
