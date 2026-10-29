@@ -242,6 +242,9 @@ async function scansView() {
 async function reportView(id) {
   const { scan, findings } = await api.get(`/scans/${encodeURIComponent(id)}`);
   const running = !FINAL.includes(scan.status);
+  // 자동 새로 고침 때 사용자가 펼쳐 둔 리소스 목록을 유지한다(같은 스캔일 때만)
+  const opened = main.dataset.report === id
+    ? new Set([...main.querySelectorAll("details[open]")].map((d) => d.dataset.check)) : new Set();
   render(
     h("p", {}, h("a", { href: "#/scans" }, "← 스캔 목록")),
     h("h1", {}, "스캔 결과 ", h("span", { class: "muted" }, scan.accountId || "")),
@@ -251,11 +254,12 @@ async function reportView(id) {
     countsView(scan.counts),
     findings.length ? priorityView(scan.summary, findings) : null,
     findings.length ? h("h2", {}, `실패한 점검 항목 ${findings.length}개`) : null,
-    findings.map(findingCard),
+    findings.map((f) => findingCard(f, opened.has(f.checkId))),
     scan.status === "DONE" && !findings.length ? h("p", {}, "실패한 점검 항목이 없습니다.") : null,
     FINAL.includes(scan.status)
       ? h("button", { type: "button", class: "danger", onclick: () => deleteScan(scan) }, "결과 삭제")
       : null);
+  main.dataset.report = id;
   if (running || findings.some((f) => f.explainSource === "pending")) pollTimer = setTimeout(route, 5000);
 }
 
@@ -280,7 +284,7 @@ function priorityView(summary, findings) {
     h("ol", {}, findings.slice(0, 3).map((f) => h("li", {}, badge(f.severity, SEVERITY), " ", titles[f.checkId]))));
 }
 
-function findingCard(f) {
+function findingCard(f, isOpen) {
   const shown = f.resources.length;
   return h("article", { class: `card finding sev-${f.severity}` },
     h("header", {},
@@ -288,7 +292,7 @@ function findingCard(f) {
       h("h3", {}, f.title || f.checkId),
       h("div", { class: "small muted" }, `${f.checkId} · ${f.service} · 리소스 ${f.totalCount}개`)),
     explanationView(f),
-    h("details", {},
+    h("details", { "data-check": f.checkId, open: isOpen },
       h("summary", {}, `영향받는 리소스 ${f.totalCount}개${shown < f.totalCount ? ` (처음 ${shown}개 표시)` : ""}`),
       h("ul", { class: "resources" }, f.resources.map((r) => h("li", {},
         h("code", {}, r.name || r.uid), r.region ? ` ${r.region}` : "",

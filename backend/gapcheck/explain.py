@@ -16,6 +16,8 @@ from .validate import ValidationError, validate
 PROMPT_VERSION = "v1"
 MIN_REMAINING_MS = 60_000
 MAX_RETRY_WAIT = 60
+# 연속으로 이만큼 실패하면(키·모델 오류, 한도 소진) 이 스캔의 남은 호출은 건너뛰고 바로 폴백한다
+MAX_CONSECUTIVE_FAILURES = 3
 
 EXPLANATION_SCHEMA = {
     "type": "object",
@@ -116,6 +118,7 @@ class Explainer:
         self.sleep = sleep
         self._last_call = None
         self.calls = 0
+        self._failures = 0
 
     def explain(self, group: dict):
         """(explanation, source)를 돌려준다. source는 cache, gemini, prowler 중 하나."""
@@ -143,7 +146,7 @@ class Explainer:
         return result
 
     def _call(self, system: str, user: str, schema: dict):
-        if self.generate is None:
+        if self.generate is None or self._failures >= MAX_CONSECUTIVE_FAILURES:
             return None
         for attempt in range(2):
             if self.remaining_ms() < MIN_REMAINING_MS:
@@ -151,16 +154,20 @@ class Explainer:
             self._pace()
             try:
                 self.calls += 1
-                return validate(self.generate(system, user, schema), schema)
+                result = validate(self.generate(system, user, schema), schema)
+                self._failures = 0
+                return result
             except llm.RateLimited as err:
                 wait = err.retry_after if err.retry_after is not None else self.interval
                 if attempt or wait > MAX_RETRY_WAIT:
+                    self._failures += 1
                     return None
                 self.sleep(wait)
             except (llm.InvalidResponse, ValidationError):
                 if attempt:
                     return None
             except llm.LLMError:
+                self._failures += 1
                 return None
         return None
 
