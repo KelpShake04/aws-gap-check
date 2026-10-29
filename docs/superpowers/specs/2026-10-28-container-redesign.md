@@ -77,7 +77,7 @@
 
 ## 배포 흐름 (조원 기준)
 
-1. Gemini 키를 SSM `/aws-gap-check/gemini-api-key`에 SecureString으로 저장한다(CloudShell 한 줄, 기존 `docs/deploy.md` 1단계 그대로).
+1. Gemini 키를 SSM `/gapcheck/gemini-api-key`에 SecureString으로 저장한다(CloudShell 한 줄, 기존 `docs/deploy.md` 1단계 그대로).
 2. CloudFormation 콘솔에서 `infra/ec2.yaml`로 스택을 만든다. 파라미터는 Gemini 모델 이름 하나(기본값 제공).
 3. 인스턴스 user data가 Docker 설치 → 공개 레포 clone(태그 고정) → `docker compose up -d`를 한다. user data는 DuckDNS에 현재 공인 IP를 등록한다. 5~10분 뒤 `https://<이름>.duckdns.org` 로 접속한다.
 4. Session Manager로 사용자를 만든다.

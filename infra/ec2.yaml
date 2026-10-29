@@ -3,9 +3,10 @@ Description: >-
   aws-gap-check on one EC2 instance: Docker Compose (mysql, app, caddy), instance role
   aws-gap-check-app-role, DuckDNS name for HTTPS. No NAT, no load balancer, no SSH.
 
-# 배포 전에 SSM Parameter Store(SecureString)에 두 값을 저장해 둔다(둘 다 이 템플릿이 만들지 않는다):
-#   /aws-gap-check/gemini-api-key   Gemini API 키 (없으면 AI 해설 없이 Prowler 원문)
-#   /aws-gap-check/duckdns-token    DuckDNS 토큰
+# 배포 전에 SSM Parameter Store(SecureString)에 두 값을 저장해 둔다(둘 다 이 템플릿이 만들지 않는다).
+# 이름을 aws나 ssm으로 시작하면 SSM이 예약어로 거부하므로 /gapcheck/ 아래에 둔다:
+#   /gapcheck/gemini-api-key   Gemini API 키 (없으면 AI 해설 없이 Prowler 원문)
+#   /gapcheck/duckdns-token    DuckDNS 토큰
 # 스택은 IAM Role 이름을 고정하므로 CAPABILITY_NAMED_IAM이 필요하다(콘솔에서는 확인란 체크).
 # 로컬 실행용 스택 aws-gap-check-local-app-role이 있으면 같은 Role 이름이라 먼저 지운다.
 
@@ -105,8 +106,8 @@ Resources:
               - Effect: Allow
                 Action: ssm:GetParameter
                 Resource:
-                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/aws-gap-check/gemini-api-key"
-                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/aws-gap-check/duckdns-token"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gapcheck/gemini-api-key"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gapcheck/duckdns-token"
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -159,7 +160,7 @@ Resources:
           #!/bin/bash
           set -euo pipefail
           . /etc/aws-gap-check.env
-          token=$(aws ssm get-parameter --region "$REGION" --name /aws-gap-check/duckdns-token \
+          token=$(aws ssm get-parameter --region "$REGION" --name /gapcheck/duckdns-token \
             --with-decryption --query Parameter.Value --output text)
           # DuckDNS는 토큰·이름이 틀려도 HTTP 200에 본문 KO를 준다
           reply=$(printf 'url = "https://www.duckdns.org/update?domains=%s&token=%s&ip="\n' "$NAME" "$token" |

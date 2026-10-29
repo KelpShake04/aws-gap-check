@@ -22,7 +22,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "backend
 from gapcheck import llm  # noqa: E402
 from gapcheck.explain import EXPLANATION_SCHEMA, SYSTEM_EXPLAIN as SYSTEM_PROMPT  # noqa: E402
 
-PARAM_NAME = "/aws-gap-check/gemini-api-key"
+PARAM_NAME = "/gapcheck/gemini-api-key"
 EXCLUDED_WORDS = ("image", "tts", "audio", "live", "embedding")
 
 # Prowler 5.46.0의 s3_bucket_public_access 메타데이터에서 가져온 예시 입력
