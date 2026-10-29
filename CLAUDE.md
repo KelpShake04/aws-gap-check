@@ -1,9 +1,9 @@
 # aws-gap-check 작업 규칙
 
-수업 팀 프로젝트(발표 12월 초). 설계는 `docs/superpowers/specs/2026-10-28-aws-gap-check-design.md`, 현재 상태는 `docs/HANDOFF.md`. 작업 전에 둘 다 읽는다.
+수업 팀 프로젝트(발표 12월 초). 현재 설계는 `docs/superpowers/specs/2026-10-28-container-redesign.md`(EC2 한 대 + Docker Compose, 최초 서버리스 설계는 보관용), 현재 상태는 `docs/HANDOFF.md`. 작업 전에 둘 다 읽는다.
 
 - 사용자는 정보보안 전공 학생. 한국어로 답하고, 기술 용어와 코드는 원문 유지.
-- 시크릿(AWS 키, Gemini API 키, 토큰, `.env`)은 읽거나 출력하거나 커밋하지 않는다. 키는 Secrets Manager/SSM으로만 다룬다.
+- 시크릿(AWS 키, Gemini API 키, 토큰, `.env`)은 읽거나 출력하거나 커밋하지 않는다. 키는 SSM Parameter Store로만 다룬다.
 - main에 직접 push 금지. 브랜치에서 작업하고 PR을 올린다. 머지는 사용자가 한다.
 - 새 의존성은 표준 라이브러리나 기존 코드로 안 될 때만 추가한다.
 - 되돌리기 어려운 AWS 작업(리소스 삭제, 계정 설정 변경, 비용이 큰 리소스 생성)은 실행 전에 사용자에게 확인한다. NAT Gateway는 만들지 않는다(월 약 $32).
