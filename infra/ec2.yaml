@@ -28,8 +28,13 @@ Parameters:
     AllowedPattern: "^[A-Za-z0-9._/-]{1,100}$"
   InstanceType:
     Type: String
-    Default: t3.medium
-    AllowedValues: [t3.small, t3.medium, t3.large]
+    # 계정이 Free Tier 플랜이면 t3.medium 등은 거부된다(2026-10-29 확인). 그 플랜에서 허용되는 4GB 타입이 기본값
+    Default: c7i-flex.large
+    AllowedValues: [c7i-flex.large, m7i-flex.large, t3.small, t3.medium, t3.large]
+  AvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    # c7i-flex.large는 ap-northeast-2a에서 지원되지 않는다(2026-10-29 확인)
+    Default: ap-northeast-2b
   LatestUbuntuAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
@@ -54,7 +59,7 @@ Resources:
     Properties:
       VpcId: !Ref Vpc
       CidrBlock: 10.20.1.0/24
-      AvailabilityZone: !Select [0, !GetAZs ""]
+      AvailabilityZone: !Ref AvailabilityZone
       MapPublicIpOnLaunch: true
       Tags: [{ Key: Name, Value: aws-gap-check-public }]
 
