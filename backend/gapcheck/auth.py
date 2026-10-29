@@ -61,7 +61,8 @@ def normalize_email(value) -> str:
     if not isinstance(value, str):
         return ""
     email = value.strip().lower()
-    return email if len(email) <= 254 and _EMAIL.fullmatch(email) else ""
+    # 비ASCII는 거부한다: 깨진 문자(U+FFFD)가 든 이메일이 계정으로 저장돼 로그인이 막힌 적이 있다
+    return email if len(email) <= 254 and email.isascii() and _EMAIL.fullmatch(email) else ""
 
 
 def token_hash(token: str) -> str:
