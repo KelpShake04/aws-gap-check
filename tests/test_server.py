@@ -20,6 +20,14 @@ ACCOUNT = "111122223333"
 NEW_PASSWORD = "correct horse battery"
 
 
+class FakeNotifier:
+    def __init__(self):
+        self.sent = []
+
+    def send_test(self, email):
+        self.sent.append(email)
+
+
 class Clock:
     def __init__(self):
         self.value = datetime(2026, 10, 28, 2, 30, tzinfo=timezone.utc)
@@ -61,6 +69,7 @@ class ServerTest(unittest.TestCase):
         self.clock = Clock()
         self.sts = FakeSts()
         self.ce = FakeCe([("2026-10-28", "Amazon S3", 1.25)])
+        self.notifier = FakeNotifier()
         self.cost = billing.CostProvider(self.sts, lambda credentials: self.ce, now=self.clock)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -70,7 +79,8 @@ class ServerTest(unittest.TestCase):
         deps = server.Deps(store=self.store, sts=self.sts, worker=self.worker,
                            service_account_id="999988887777", daily_limit=10,
                            frontend_dir=ROOT / "frontend", template_file=ROOT / "infra" / "customer-role.yaml",
-                           now=self.clock, cost=self.cost)
+                           now=self.clock, cost=self.cost, notifier=self.notifier)
+        self.deps = deps
         self.httpd = server.make_server(deps, "127.0.0.1", 0)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.server_close)
@@ -223,6 +233,43 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(bob.request("GET", path)[0], 404)
         self.assertEqual(bob.request("POST", path + "/refresh")[0], 404)
         self.assertEqual(Client(self.port).request("GET", path)[0], 401)
+
+    def test_schedule_endpoint(self):
+        alice, _ = self.user()
+        conn = alice.request("POST", "/api/connections")[1]["connection"]
+        path = f"/api/connections/{conn['id']}/schedule"
+        self.assertEqual(conn["schedule"], "off")
+        self.assertEqual(alice.request("POST", path, {"schedule": "daily"})[0], 400)  # 검증 전 연결
+        self.sts.allowed[conn["externalId"]] = ACCOUNT
+        alice.request("POST", f"/api/connections/{conn['id']}/verify", {"accountId": ACCOUNT})
+
+        status, body = alice.request("POST", path, {"schedule": "weekly"})
+        self.assertEqual((status, body["connection"]["schedule"]), (200, "weekly"))
+        listed = alice.request("GET", "/api/connections")[1]["connections"]
+        self.assertEqual(listed[0]["schedule"], "weekly")
+        for bad in ({}, {"schedule": "hourly"}, {"schedule": 1}):
+            with self.subTest(body=bad):
+                self.assertEqual(alice.request("POST", path, bad)[0], 400)
+        self.assertEqual(alice.request("POST", path, {"schedule": "off"}, csrf=False)[0], 403)
+
+        bob, _ = self.user("bob@example.com")
+        self.assertEqual(bob.request("POST", path, {"schedule": "daily"})[0], 404)
+        self.assertEqual(alice.request("GET", "/api/connections")[1]["connections"][0]["schedule"], "weekly")
+
+    def test_test_mail_endpoint(self):
+        alice, _ = self.user()
+        self.assertTrue(alice.request("GET", "/api/me")[1]["mail"])
+        self.assertEqual(alice.request("POST", "/api/notify/test")[1], {"sentTo": "alice@example.com"})
+        self.assertEqual(alice.request("POST", "/api/notify/test")[0], 429)  # 1분에 한 번
+        self.clock.value += timedelta(seconds=61)
+        self.assertEqual(alice.request("POST", "/api/notify/test")[0], 200)
+        self.assertEqual(self.notifier.sent, ["alice@example.com"] * 2)
+        self.assertEqual(alice.request("POST", "/api/notify/test", csrf=False)[0], 403)
+        self.assertEqual(Client(self.port).request("POST", "/api/notify/test")[0], 401)
+
+        self.deps.notifier = None
+        self.assertFalse(alice.request("GET", "/api/me")[1]["mail"])
+        self.assertEqual(alice.request("POST", "/api/notify/test")[0], 503)
 
     def test_path_values_are_validated(self):
         client, _ = self.user()

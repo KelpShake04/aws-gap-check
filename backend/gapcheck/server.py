@@ -19,12 +19,13 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from . import auth, connections, scans
-from .common import ApiError, BadRequest, Forbidden, Unauthorized, Unavailable, utcnow
+from .common import ApiError, BadRequest, Forbidden, TooMany, Unauthorized, Unavailable, utcnow
 from .views import TEMPLATE_PATH, conn_view, finding_view, scan_view, setup_info
 
 logger = logging.getLogger(__name__)
 
 MAX_BODY_BYTES = 16 * 1024
+MAIL_TEST_SECONDS = 60
 COOKIE = "agc_session"
 CSRF_HEADER, CSRF_VALUE = "X-Requested-With", "gapcheck"
 REGION = "ap-northeast-2"
@@ -57,6 +58,8 @@ class Deps:
     demo: bool = False
     now: Callable = utcnow
     cost: Any = None  # get(sub, conn, force) -> 비용 요약 dict
+    notifier: Any = None  # send_test(email). 메일 설정이 없으면 None
+    mail_sent: dict = field(default_factory=dict)  # 사용자별 마지막 테스트 메일 시각
 
 
 @dataclass
@@ -97,7 +100,7 @@ def change_password(call):
 
 def me_view(deps, user: dict) -> dict:
     return {"email": user["email"], "mustChangePassword": user["mustChangePassword"],
-            "demo": deps.demo, "region": REGION}
+            "demo": deps.demo, "region": REGION, "mail": deps.notifier is not None}
 
 
 # ---------- 계정 연결 ----------
@@ -115,6 +118,28 @@ def verify_connection(call):
     conn = connections.verify(call.deps.store, call.deps.sts, call.user["id"], call.args[0],
                               call.body().get("accountId"), call.deps.now())
     return 200, {"connection": conn_view(conn)}
+
+
+def set_schedule(call):
+    conn = connections.set_schedule(call.deps.store, call.user["id"], call.args[0], call.body().get("schedule"))
+    return 200, {"connection": conn_view(conn)}
+
+
+def send_test_mail(call):
+    deps = call.deps
+    if deps.notifier is None:
+        raise Unavailable("메일 발송이 설정되지 않았습니다.")
+    now = deps.now()
+    last = deps.mail_sent.get(call.user["id"])
+    if last and (now - last).total_seconds() < MAIL_TEST_SECONDS:
+        raise TooMany("테스트 메일은 1분에 한 번만 보낼 수 있습니다.")
+    deps.mail_sent[call.user["id"]] = now
+    try:
+        deps.notifier.send_test(call.user["email"])
+    except Exception:
+        logger.exception("test mail failed")
+        raise Unavailable("메일을 보내지 못했습니다. 보내는 주소와 받는 주소가 SES에서 확인됐는지 보세요.") from None
+    return 200, {"sentTo": call.user["email"]}
 
 
 def delete_connection(call):
@@ -177,6 +202,8 @@ ROUTES = [
     ("POST", r"/api/connections", create_connection, "user"),
     ("POST", r"/api/connections/([^/]+)/verify", verify_connection, "user"),
     ("DELETE", r"/api/connections/([^/]+)", delete_connection, "user"),
+    ("POST", r"/api/connections/([^/]+)/schedule", set_schedule, "user"),
+    ("POST", r"/api/notify/test", send_test_mail, "user"),
     ("GET", r"/api/connections/([^/]+)/cost", get_cost, "user"),
     ("POST", r"/api/connections/([^/]+)/cost/refresh", refresh_cost, "user"),
     ("GET", r"/api/scans", list_scans, "user"),

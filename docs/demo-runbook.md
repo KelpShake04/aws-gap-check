@@ -68,6 +68,7 @@ aws ssm delete-parameter --name /gapcheck/duckdns-token
 # 로컬 실행용으로 만든 것이 남아 있으면:
 aws cloudformation delete-stack --stack-name aws-gap-check-local-app-role
 # IAM 사용자 aws-gap-check-local의 액세스 키 삭제 후 사용자 삭제
+# 알림 메일용으로 SES에서 확인한 이메일 주소가 있으면(콘솔 SES → Identities) 삭제
 ```
 
 Gemini API 키는 AI Studio에서, 서브도메인은 DuckDNS에서 삭제한다(토큰 재발급으로 무효화도 가능).

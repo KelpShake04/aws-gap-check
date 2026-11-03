@@ -13,7 +13,7 @@ FINDING_FIELDS = ("checkId", "title", "severity", "service", "resourceType", "de
 
 def conn_view(conn: dict) -> dict:
     return {key: conn.get(key) for key in
-            ("id", "accountId", "status", "message", "externalId", "createdAt", "verifiedAt")}
+            ("id", "accountId", "status", "message", "schedule", "externalId", "createdAt", "verifiedAt")}
 
 
 def scan_view(scan: dict) -> dict:

@@ -10,6 +10,7 @@ from datetime import datetime
 from . import ids
 from .common import BadRequest, NotFound, error_code, iso
 
+SCHEDULES = ("off", "daily", "weekly")
 DENIED_MESSAGE = ("Role을 맡을 수 없습니다. 템플릿을 이 연결의 ExternalId로 배포했는지, "
                   "계정 ID가 맞는지 확인하세요.")
 
@@ -21,6 +22,7 @@ def create(store, sub: str, now: datetime) -> dict:
         "accountId": None,
         "status": "PENDING",
         "message": "",
+        "schedule": "off",
         "createdAt": iso(now),
         "verifiedAt": None,
     }
@@ -58,6 +60,17 @@ def verify(store, sts, sub: str, conn_id: str, account_id, now: datetime) -> dic
               "message": message, "verifiedAt": iso(now) if ok else None}
     store.update_connection(sub, conn_id, fields)
     conn.update(fields)
+    return conn
+
+
+def set_schedule(store, sub: str, conn_id: str, schedule) -> dict:
+    conn = get(store, sub, conn_id)
+    if schedule not in SCHEDULES:
+        raise BadRequest("점검 주기는 off, daily, weekly 중 하나입니다.")
+    if conn["status"] != "ACTIVE":
+        raise BadRequest("검증이 끝난 연결만 자동 점검을 켤 수 있습니다.")
+    store.update_connection(sub, conn_id, {"schedule": schedule})
+    conn["schedule"] = schedule
     return conn
 
 

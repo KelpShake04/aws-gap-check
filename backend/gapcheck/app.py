@@ -11,7 +11,7 @@ import pathlib
 import time
 from datetime import timedelta
 
-from . import billing, db, explain, ids, llm, server, worker
+from . import billing, db, explain, ids, llm, notify, server, worker
 from .common import iso, utcnow
 
 logger = logging.getLogger("gapcheck")
@@ -47,6 +47,13 @@ class DemoCost:
         next_month = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
         rest = sum(base for _, base in self.SERVICES) * ((next_month - today).days - 1)
         return {**billing.summarize(rows, today, rest), "fetchedAt": iso(self.now())}
+
+
+class DemoMailer:
+    """데모 모드 전용: 메일을 보내지 않고 서버 로그에 남긴다."""
+
+    def send(self, to, subject, body):
+        logger.warning("DEMO MAIL to %s: %s\n%s", to, subject, body)
 
 
 def ce_client(credentials):
@@ -120,7 +127,7 @@ def main(env=os.environ) -> None:
     if fixture:
         logger.warning("DEMO MODE: account verification is bypassed and scans use %s", fixture)
         sts, scanner, ssm = DemoSts(), worker.copy_fixture(pathlib.Path(fixture)), None
-        cost = DemoCost()
+        cost, mailer = DemoCost(), DemoMailer()
         service_account_id = env.get("SERVICE_ACCOUNT_ID", DEMO_ACCOUNT_ID)
     else:
         import boto3
@@ -129,18 +136,23 @@ def main(env=os.environ) -> None:
         ssm = lambda: boto3.client("ssm")  # noqa: E731 - 키가 필요할 때만 클라이언트를 만든다
         service_account_id = env.get("SERVICE_ACCOUNT_ID") or sts.get_caller_identity()["Account"]
         cost = billing.CostProvider(sts, ce_client)
+        # 보내는 주소(SES에서 확인된 주소)가 없으면 알림 메일은 꺼진다
+        mailer = notify.SesMailer(boto3.client("sesv2"), env["MAIL_FROM"]) if env.get("MAIL_FROM") else None
 
     make_explainer = explainer_factory(env, store, ssm)
     data_dir = pathlib.Path(env.get("DATA_DIR", "/data"))
-    scan_worker = worker.Worker(store, scanner, make_explainer, data_dir / "raw")
+    daily_limit = int(env.get("DAILY_SCAN_LIMIT", "10"))
+    notifier = notify.Notifier(store, mailer, env.get("SITE_URL", "")) if mailer else None
+    scan_worker = worker.Worker(store, scanner, make_explainer, data_dir / "raw", notifier=notifier,
+                                daily_limit=daily_limit)
     scan_worker.start()
 
     app_dir = pathlib.Path(__file__).resolve().parent.parent
     deps = server.Deps(store=store, sts=sts, worker=scan_worker, service_account_id=service_account_id,
-                       daily_limit=int(env.get("DAILY_SCAN_LIMIT", "10")),
+                       daily_limit=daily_limit,
                        frontend_dir=pathlib.Path(env.get("FRONTEND_DIR", app_dir / "frontend")),
                        template_file=pathlib.Path(env.get("TEMPLATE_FILE", app_dir / "customer-role.yaml")),
-                       demo=bool(fixture), cost=cost)
+                       demo=bool(fixture), cost=cost, notifier=notifier)
     port = int(env.get("PORT", "8080"))
     logger.info("listening on :%d", port)
     server.make_server(deps, "0.0.0.0", port).serve_forever()

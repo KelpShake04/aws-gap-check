@@ -14,7 +14,7 @@ import subprocess
 import threading
 import time
 
-from . import ids, results
+from . import ids, results, scheduler
 from .common import iso, utcnow
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,7 @@ RESULT_NAME = "prowler.ocsf.json"
 MAX_RESULT_BYTES = 50 * 1024 * 1024
 PROWLER_TIMEOUT = 60 * 60
 CLEANUP_INTERVAL = 24 * 3600
+SCHEDULE_INTERVAL = 60
 IDLE_WAIT = 30
 SCAN_FAILED = "스캔에 실패했습니다. 연결을 다시 검증하세요(Role 삭제, ExternalId 불일치 등)."
 
@@ -59,7 +60,10 @@ def copy_fixture(fixture: pathlib.Path):
 
 
 class Worker:
-    def __init__(self, store, scanner, make_explainer, raw_dir: pathlib.Path, now=utcnow):
+    def __init__(self, store, scanner, make_explainer, raw_dir: pathlib.Path, now=utcnow,
+                 notifier=None, daily_limit: int = 10):
+        self.notifier = notifier  # scan_done(sub, scan)를 가진 객체. 없으면 알림 메일을 보내지 않는다
+        self.daily_limit = daily_limit
         self.store = store
         self.scanner = scanner
         self.make_explainer = make_explainer
@@ -109,11 +113,25 @@ class Worker:
             self._update(sub, scan_id, status="PROCESSING")
             results.store_and_explain(self.store, self.make_explainer(), sub, scan, data, self.now)
             logger.info("scan %s done", scan_id)
+            self._notify(sub, scan)
         except ScanError as err:
             self._update(sub, scan_id, status="FAILED", error=str(err))
         except Exception:
             logger.exception("scan %s failed", scan_id)
             self._update(sub, scan_id, status="FAILED", error="결과를 처리하지 못했습니다.")
+
+    def _notify(self, sub: str, scan: dict) -> None:
+        """메일 실패가 끝난 스캔을 실패로 만들지 않게 따로 잡는다."""
+        if self.notifier is None:
+            return
+        try:
+            self.notifier.scan_done(sub, scan)
+        except Exception as err:
+            logger.error("alert mail failed for scan %s: %s", scan["id"], type(err).__name__)
+
+    def run_schedule(self) -> None:
+        if scheduler.run_due(self.store, self.now(), self.daily_limit):
+            self.wake.set()
 
     def _scan(self, sub: str, scan: dict) -> list:
         conn = self.store.get_connection(sub, scan["connectionId"])
@@ -139,7 +157,7 @@ class Worker:
         self.store.update_scan(sub, scan_id, fields)
 
     def loop(self) -> None:
-        recovered, last_cleanup = False, None
+        recovered, last_cleanup, last_schedule = False, None, None
         while True:
             try:
                 if not recovered:
@@ -148,6 +166,9 @@ class Worker:
                 if last_cleanup is None or time.monotonic() - last_cleanup > CLEANUP_INTERVAL:
                     self.cleanup()
                     last_cleanup = time.monotonic()
+                if last_schedule is None or time.monotonic() - last_schedule > SCHEDULE_INTERVAL:
+                    self.run_schedule()
+                    last_schedule = time.monotonic()
                 if not self.run_once():
                     self.wake.wait(IDLE_WAIT)
                     self.wake.clear()

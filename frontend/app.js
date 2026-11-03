@@ -286,7 +286,56 @@ function accountCard(conn, scan, onCost) {
     h("h3", { class: "block" }, "비용"),
     costBox,
     h("h3", { class: "block" }, "보안 점검"),
-    securityView(conn, scan));
+    securityView(conn, scan),
+    h("h3", { class: "block" }, "자동 점검·알림"),
+    scheduleView(conn));
+}
+
+const SCHEDULE = [["off", "끔"], ["daily", "매일"], ["weekly", "매주"]];
+
+function scheduleView(conn) {
+  const note = h("p", { class: "small muted" });
+  const result = h("span", { class: "small" });
+  const describe = (value) => {
+    const label = Object.fromEntries(SCHEDULE)[value];
+    const base = value === "off"
+      ? `꺼져 있습니다. 켜면 정해진 주기로 점검하고, 지난번에 없던 치명·높음 항목이 생기면 ${user.email}로 메일을 보냅니다.`
+      : `${label} 자동 점검합니다. 지난번에 없던 치명·높음 항목이 생기면 ${user.email}로 메일을 보냅니다.`;
+    note.textContent = user.mail || value === "off" ? base : `${base} (이 서버는 메일 발송이 설정되지 않아 메일은 가지 않습니다.)`;
+  };
+  const select = h("select", {
+    "aria-label": "자동 점검 주기",
+    onchange: async () => {
+      select.disabled = true;
+      result.textContent = "";
+      try {
+        const { connection } = await api.post(`/connections/${encodeURIComponent(conn.id)}/schedule`, { schedule: select.value });
+        describe(connection.schedule);
+      } catch (err) {
+        select.value = conn.schedule;
+        result.textContent = err.message;
+        result.className = "small error-text";
+      }
+      select.disabled = false;
+    },
+  }, SCHEDULE.map(([value, label]) => h("option", { value, selected: conn.schedule === value }, label)));
+  describe(conn.schedule);
+  const test = user.mail ? h("button", {
+    type: "button", class: "ghost",
+    onclick: async () => {
+      test.disabled = true;
+      result.className = "small";
+      try {
+        const { sentTo } = await api.post("/notify/test");
+        result.textContent = `${sentTo}로 테스트 메일을 보냈습니다.`;
+      } catch (err) {
+        result.textContent = err.message;
+        result.className = "small error-text";
+      }
+      test.disabled = false;
+    },
+  }, "테스트 메일 보내기") : null;
+  return h("div", {}, h("div", { class: "schedule-row" }, select, test, result), note);
 }
 
 function skeleton() {

@@ -105,6 +105,7 @@ ul.services svg { grid-column: 1 / -1; width: 100%; height: 5px; }
 ul.services .track { fill: #eef1f5; }
 ul.services .fill { fill: var(--accent); }
 .scan-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.schedule-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .scan-actions { display: flex; align-items: center; gap: 12px; }
 .account .counts:not(.three) { grid-template-columns: repeat(6, 1fr); margin: 12px 0 0; }
 .account .counts:not(.three) .count { padding: 6px 4px; font-size: 0.8rem; }

@@ -16,7 +16,7 @@ from .common import iso, parse_iso
 TIME, JSON, BOOL = "time", "json", "bool"
 
 CONNECTION = {"id": "id", "externalId": "external_id", "accountId": "account_id",
-              "status": "status", "message": "message",
+              "status": "status", "message": "message", "schedule": "schedule",
               "createdAt": ("created_at", TIME), "verifiedAt": ("verified_at", TIME)}
 SCAN = {"id": "id", "connectionId": "connection_id", "accountId": "account_id", "status": "status",
         "counts": ("counts", JSON), "summary": ("summary", JSON), "error": "error",
@@ -105,6 +105,12 @@ class Store:
 
     def delete_connection(self, sub: str, conn_id: str) -> None:
         self._execute("DELETE FROM connections WHERE user_id = %s AND id = %s", (sub, conn_id))
+
+    def scheduled_connections(self) -> list:
+        """자동 점검이 켜진 연결의 (user_id, connection). 작업자 전용이라 사용자 구분 없이 읽는다."""
+        rows = self._execute(f"SELECT user_id, {_columns(CONNECTION)} FROM connections "
+                             "WHERE status = 'ACTIVE' AND schedule <> 'off' ORDER BY created_at, id", ())
+        return [(row["user_id"], _from_row(CONNECTION, row)) for row in rows]
 
     # 스캔
     def put_scan(self, sub: str, scan: dict) -> None:
