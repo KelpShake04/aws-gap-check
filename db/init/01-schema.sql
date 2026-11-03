@@ -33,6 +33,8 @@ CREATE TABLE connections (
   account_id  CHAR(12)     NULL,
   status      VARCHAR(16)  NOT NULL,
   message     VARCHAR(500) NOT NULL DEFAULT '',
+  -- 자동 점검 주기: off, daily, weekly. off가 아니면 점검 뒤 새 위험 항목을 이메일로 알린다
+  schedule    VARCHAR(8)   NOT NULL DEFAULT 'off',
   created_at  DATETIME     NOT NULL,
   verified_at DATETIME     NULL,
   PRIMARY KEY (user_id, id),

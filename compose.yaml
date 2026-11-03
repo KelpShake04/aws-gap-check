@@ -43,6 +43,9 @@ services:
       # 주 모델이 503·타임아웃으로 계속 실패할 때만 쓰는 보조 모델(EC2 실측: 해설 6건 중 5건 성공, 건당 17~25초). 비우면 쓰지 않는다.
       GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL-gemini-3.5-flash-lite}
       DAILY_SCAN_LIMIT: ${DAILY_SCAN_LIMIT:-10}
+      # 알림 메일: 보내는 주소는 SES에서 확인된 주소여야 한다. 비우면 메일을 보내지 않는다. SITE_URL은 메일 속 링크용
+      MAIL_FROM: ${MAIL_FROM:-}
+      SITE_URL: ${SITE_URL:-}
       # 데모 모드: /app/demo/ocsf-sample.json을 넣으면 AWS 없이 화면 흐름을 보여 준다(계정 검증을 건너뜀)
       DEMO_FIXTURE: ${DEMO_FIXTURE:-}
     volumes:

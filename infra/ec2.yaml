@@ -21,6 +21,12 @@ Parameters:
     Description: Gemini 모델 이름. 비우면 AI 해설 없이 Prowler 원문을 보여 준다
     Default: ""
     AllowedPattern: "^[A-Za-z0-9._-]{0,60}$"
+  MailFrom:
+    Type: String
+    Description: 알림 메일을 보낼 주소. SES에서 이 주소(이메일 ID)를 먼저 확인해야 한다. 비우면 알림 메일 없음
+    Default: ""
+    AllowedPattern: "^([A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,200}\\.[A-Za-z]{2,24})?$"
+    ConstraintDescription: 이메일 주소 형식이거나 빈 값
   RepoRef:
     Type: String
     Description: 배포할 git 태그, 브랜치 또는 커밋 SHA (KelpShake04/aws-gap-check)
@@ -38,6 +44,9 @@ Parameters:
   LatestUbuntuAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+
+Conditions:
+  HasMailFrom: !Not [!Equals [!Ref MailFrom, ""]]
 
 Resources:
   Vpc:
@@ -113,6 +122,13 @@ Resources:
                 Resource:
                   - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gapcheck/gemini-api-key"
                   - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gapcheck/duckdns-token"
+              # 알림 메일: 확인된 보내는 주소 하나로만 보낼 수 있다
+              - !If
+                - HasMailFrom
+                - Effect: Allow
+                  Action: ses:SendEmail
+                  Resource: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${MailFrom}"
+                - !Ref AWS::NoValue
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -201,6 +217,8 @@ Resources:
           MYSQL_PASSWORD=$(openssl rand -hex 16)
           SITE_ADDRESS=$NAME.duckdns.org
           GEMINI_MODEL=${GeminiModel}
+          MAIL_FROM=${MailFrom}
+          SITE_URL=https://$NAME.duckdns.org
           EOF
           docker compose up -d --build
 

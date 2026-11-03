@@ -9,8 +9,10 @@ import logging
 import os
 import pathlib
 import time
+from datetime import timedelta
 
-from . import db, explain, ids, llm, server, worker
+from . import billing, db, explain, ids, llm, notify, server, worker
+from .common import iso, utcnow
 
 logger = logging.getLogger("gapcheck")
 
@@ -26,6 +28,41 @@ class DemoSts:
     def assume_role(self, RoleArn, RoleSessionName, ExternalId, DurationSeconds):
         account = RoleArn.split(":")[4]
         return {"AssumedRoleUser": {"Arn": f"arn:aws:sts::{account}:assumed-role/{ids.ROLE_NAME}/{RoleSessionName}"}}
+
+
+class DemoCost:
+    """데모 모드 전용: Cost Explorer 대신 날짜에서 계산한 가짜 비용을 보여 준다."""
+
+    SERVICES = (("Amazon Elastic Compute Cloud - Compute", 1.9), ("Amazon Relational Database Service", 1.2),
+                ("Amazon Simple Storage Service", 0.35), ("Amazon Virtual Private Cloud", 0.6),
+                ("AmazonCloudWatch", 0.15), ("AWS Key Management Service", 0.05))
+
+    def __init__(self, now=utcnow):
+        self.now = now
+
+    def get(self, sub, conn, force=False):
+        today = self.now().date()
+        rows = [(today - timedelta(days=back), name, base * (0.8 + 0.1 * ((today.toordinal() - back) % 5)))
+                for back in range(70) for name, base in self.SERVICES]
+        next_month = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
+        rest = sum(base for _, base in self.SERVICES) * ((next_month - today).days - 1)
+        return {**billing.summarize(rows, today, rest), "fetchedAt": iso(self.now())}
+
+
+class DemoMailer:
+    """데모 모드 전용: 메일을 보내지 않고 서버 로그에 남긴다."""
+
+    def send(self, to, subject, body):
+        logger.warning("DEMO MAIL to %s: %s\n%s", to, subject, body)
+
+
+def ce_client(credentials):
+    """Cost Explorer는 us-east-1 하나뿐이다. 고객 계정의 임시 자격 증명으로 만든다."""
+    import boto3
+
+    return boto3.client("ce", region_name="us-east-1", aws_access_key_id=credentials["AccessKeyId"],
+                        aws_secret_access_key=credentials["SecretAccessKey"],
+                        aws_session_token=credentials["SessionToken"])
 
 
 def store_from_env(env=os.environ) -> db.Store:
@@ -90,6 +127,7 @@ def main(env=os.environ) -> None:
     if fixture:
         logger.warning("DEMO MODE: account verification is bypassed and scans use %s", fixture)
         sts, scanner, ssm = DemoSts(), worker.copy_fixture(pathlib.Path(fixture)), None
+        cost, mailer = DemoCost(), DemoMailer()
         service_account_id = env.get("SERVICE_ACCOUNT_ID", DEMO_ACCOUNT_ID)
     else:
         import boto3
@@ -97,18 +135,24 @@ def main(env=os.environ) -> None:
         sts, scanner = boto3.client("sts"), worker.run_prowler
         ssm = lambda: boto3.client("ssm")  # noqa: E731 - 키가 필요할 때만 클라이언트를 만든다
         service_account_id = env.get("SERVICE_ACCOUNT_ID") or sts.get_caller_identity()["Account"]
+        cost = billing.CostProvider(sts, ce_client)
+        # 보내는 주소(SES에서 확인된 주소)가 없으면 알림 메일은 꺼진다
+        mailer = notify.SesMailer(boto3.client("sesv2"), env["MAIL_FROM"]) if env.get("MAIL_FROM") else None
 
     make_explainer = explainer_factory(env, store, ssm)
     data_dir = pathlib.Path(env.get("DATA_DIR", "/data"))
-    scan_worker = worker.Worker(store, scanner, make_explainer, data_dir / "raw")
+    daily_limit = int(env.get("DAILY_SCAN_LIMIT", "10"))
+    notifier = notify.Notifier(store, mailer, env.get("SITE_URL", "")) if mailer else None
+    scan_worker = worker.Worker(store, scanner, make_explainer, data_dir / "raw", notifier=notifier,
+                                daily_limit=daily_limit)
     scan_worker.start()
 
     app_dir = pathlib.Path(__file__).resolve().parent.parent
     deps = server.Deps(store=store, sts=sts, worker=scan_worker, service_account_id=service_account_id,
-                       daily_limit=int(env.get("DAILY_SCAN_LIMIT", "10")),
+                       daily_limit=daily_limit,
                        frontend_dir=pathlib.Path(env.get("FRONTEND_DIR", app_dir / "frontend")),
                        template_file=pathlib.Path(env.get("TEMPLATE_FILE", app_dir / "customer-role.yaml")),
-                       demo=bool(fixture))
+                       demo=bool(fixture), cost=cost, notifier=notifier)
     port = int(env.get("PORT", "8080"))
     logger.info("listening on :%d", port)
     server.make_server(deps, "0.0.0.0", port).serve_forever()

@@ -29,12 +29,30 @@ function h(tag, props = {}, ...children) {
   return el;
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// 차트용. SVG도 속성과 textContent로만 만든다(인라인 style은 CSP가 막으므로 쓰지 않는다).
+function svg(tag, props = {}, ...children) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(props)) el.setAttribute(key, String(value));
+  for (const child of children.flat()) el.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  return el;
+}
+
 function render(...nodes) {
   main.replaceChildren(...nodes.flat(Infinity).filter(Boolean));
 }
 
 function fmt(iso) {
   return iso ? new Date(iso).toLocaleString("ko-KR") : "-";
+}
+
+function money(amount, currency = "USD") {
+  try {
+    return amount.toLocaleString("en-US", { style: "currency", currency });
+  } catch {
+    return `${amount.toFixed(2)} ${currency}`;
+  }
 }
 
 function badge(value, labels = STATUS) {
@@ -73,7 +91,7 @@ function landing() {
   const result = h("p", { class: "small error-text" });
   render(h("section", { class: "card hero" },
     h("h1", {}, "AWS 계정 빈틈 점검"),
-    h("p", {}, "계정을 읽기 전용으로 연결하면 Prowler로 설정상 빈틈을 점검하고, AI가 무엇이 왜 위험한지와 고치는 순서를 한국어로 설명합니다."),
+    h("p", {}, "계정을 읽기 전용으로 연결하면 이번 달 비용을 보여 주고, Prowler로 설정상 빈틈을 점검하며, AI가 무엇이 왜 위험한지와 고치는 순서를 한국어로 설명합니다."),
     h("p", { class: "small muted" }, "액세스 키는 받지 않습니다. 연결은 고객 계정의 읽기 전용 Role과 ExternalId로만 합니다."),
     h("form", {
       class: "stack",
@@ -111,7 +129,7 @@ function passwordView() {
         }
         try {
           await auth.changePassword(api, current.value, next.value);
-          history.replaceState(null, "", "#/scans");
+          history.replaceState(null, "", "#/");
           await start();
         } catch (err) {
           result.textContent = err.message;
@@ -165,7 +183,7 @@ function showSetup(conn, setup) {
         const { connection } = await api.post(`/connections/${encodeURIComponent(conn.id)}/verify`,
           { accountId: input.value.trim() });
         if (connection.status === "ACTIVE") {
-          location.hash = "#/scans";
+          location.hash = "#/";
         } else {
           result.textContent = connection.message || "검증에 실패했습니다.";
           result.className = "small error-text";
@@ -189,13 +207,264 @@ function showSetup(conn, setup) {
           h("dt", {}, "ExternalId"), h("dd", {}, copyable(conn.externalId)))),
       h("li", {}, "스택이 완료되면 계정 ID를 입력하고 검증합니다.", form, result)),
     h("p", { class: "small muted" },
-      `만들어지는 Role(${setup.roleName})은 읽기 전용(SecurityAudit, ViewOnlyAccess)이며, 이 연결의 ExternalId를 아는 이 서비스만 맡을 수 있습니다. 연결을 끊으려면 그 계정에서 스택을 삭제하세요.`)));
+      `만들어지는 Role(${setup.roleName})은 읽기 전용(SecurityAudit, ViewOnlyAccess, 비용 조회 ce:GetCostAndUsage·ce:GetCostForecast)이며, 이 연결의 ExternalId를 아는 이 서비스만 맡을 수 있습니다. 연결을 끊으려면 그 계정에서 스택을 삭제하세요.`)));
 }
 
 async function deleteConnection(conn) {
   if (!confirm("이 연결 기록을 삭제할까요? (고객 계정의 Role은 그 계정에서 스택을 지워야 사라집니다)")) return;
   await api.del(`/connections/${encodeURIComponent(conn.id)}`);
   await connectionsView();
+}
+
+// ---------- 대시보드 ----------
+async function dashboardView() {
+  const [{ connections }, { scans }] = await Promise.all([api.get("/connections"), api.get("/scans")]);
+  const active = connections.filter((c) => c.status === "ACTIVE");
+  const waiting = connections.length - active.length;
+  const kpis = h("div", { class: "kpis" });
+  const costs = new Map();
+  const latest = new Map(active.map((c) => [c.id, scans.find((s) => s.connectionId === c.id)]));
+  const refreshKpis = () => kpis.replaceChildren(...kpiTiles(active.length, costs, latest));
+  refreshKpis();
+  render(
+    h("div", { class: "page-head" },
+      h("h1", {}, "대시보드"),
+      h("span", { class: "muted small" }, `연결된 계정 ${active.length}개`)),
+    active.length ? kpis : h("section", { class: "card empty" },
+      h("p", {}, "연결된 계정이 없습니다."),
+      h("p", { class: "muted" }, "계정을 연결하면 비용과 보안 점검 결과를 여기서 한눈에 볼 수 있습니다."),
+      h("a", { class: "button", href: "#/connections" }, "계정 연결하기")),
+    waiting ? h("p", { class: "small muted" }, `검증이 끝나지 않은 연결 ${waiting}개 — `,
+      h("a", { href: "#/connections" }, "계정 연결에서 마무리"), "하세요.") : null,
+    h("div", { class: "accounts" }, active.map((conn) => accountCard(conn, latest.get(conn.id), (cost) => {
+      costs.set(conn.id, cost);
+      refreshKpis();
+    }))));
+  if (scans.some((s) => !FINAL.includes(s.status))) pollTimer = setTimeout(route, 10000);
+}
+
+// 전체 계정 요약. 비용은 불러온 계정만 합친다(아직이면 "…", 실패한 계정은 빠진다).
+function kpiTiles(accountCount, costs, latest) {
+  const loaded = [...costs.values()];
+  const ok = loaded.filter((c) => c.status === "OK");
+  const pending = costs.size < accountCount;
+  const currency = ok.length ? ok[0].currency : "USD";
+  const sum = (key) => ok.reduce((total, c) => total + (c[key] || 0), 0);
+  const risky = [...latest.values()].reduce((total, s) =>
+    total + (s && s.status === "DONE" && s.counts ? (s.counts.critical || 0) + (s.counts.high || 0) : 0), 0);
+  const scanned = [...latest.values()].filter((s) => s && s.status === "DONE").length;
+  const tile = (label, value, note, tone) => h("div", { class: `kpi ${tone || ""}` },
+    h("span", { class: "kpi-label" }, label), h("strong", {}, value), note ? h("span", { class: "kpi-note" }, note) : null);
+  return [
+    tile("이번 달 사용액", pending ? "…" : money(sum("spent"), currency), "전체 계정 합계"),
+    tile("월말 예상", pending ? "…" : money(sum("forecast"), currency), "예측이 있는 계정만"),
+    tile("긴급 보안 항목", scanned ? String(risky) : "-", scanned ? "치명 + 높음 (최신 스캔)" : "스캔 결과 없음", risky ? "bad" : ""),
+    tile("연결 계정", String(accountCount), `스캔 완료 ${scanned}개`),
+  ];
+}
+
+function accountCard(conn, scan, onCost) {
+  const costBox = h("div", {}, skeleton());
+  const refresh = h("button", { type: "button", class: "ghost", disabled: true, onclick: () => loadCost(true) }, "↻ 새로고침");
+  async function loadCost(force) {
+    refresh.disabled = true;
+    if (force) costBox.replaceChildren(skeleton());
+    try {
+      const path = `/connections/${encodeURIComponent(conn.id)}/cost`;
+      const { cost } = force ? await api.post(`${path}/refresh`) : await api.get(path);
+      costBox.replaceChildren(costView(cost));
+      onCost(cost);
+    } catch (err) {
+      costBox.replaceChildren(h("p", { class: "error-text" }, err.message));
+    }
+    refresh.disabled = false;
+  }
+  loadCost(false);
+  const schedulePill = h("span", { class: "pill" });
+  const showSchedule = (value) => {
+    const label = Object.fromEntries(SCHEDULE)[value];
+    schedulePill.className = value === "off" ? "pill" : "pill on";
+    schedulePill.textContent = value === "off" ? "자동 점검 꺼짐" : `${label} 자동 점검`;
+  };
+  showSchedule(conn.schedule);
+  return h("section", { class: "card account" },
+    h("header", { class: "account-head" },
+      h("div", {}, h("span", { class: "eyebrow" }, "AWS 계정"), h("h2", {}, conn.accountId),
+        h("div", { class: "pills" }, h("span", { class: "pill ok" }, "연결됨"), schedulePill,
+          h("span", { class: "pill" }, scan ? `마지막 점검 ${ago(scan.createdAt)}` : "점검 기록 없음"))),
+      refresh),
+    h("h3", { class: "block" }, "비용"),
+    costBox,
+    h("h3", { class: "block" }, "보안 점검"),
+    securityView(conn, scan),
+    h("h3", { class: "block" }, "자동 점검·알림"),
+    scheduleView(conn, showSchedule));
+}
+
+const SCHEDULE = [["off", "끔"], ["daily", "매일"], ["weekly", "매주"]];
+
+function scheduleView(conn, onChange) {
+  const note = h("p", { class: "small muted" });
+  const result = h("span", { class: "small" });
+  const describe = (value) => {
+    const label = Object.fromEntries(SCHEDULE)[value];
+    const base = value === "off"
+      ? `꺼져 있습니다. 켜면 정해진 주기로 점검하고, 지난번에 없던 치명·높음 항목이 생기면 ${user.email}로 메일을 보냅니다.`
+      : `${label} 자동 점검합니다. 지난번에 없던 치명·높음 항목이 생기면 ${user.email}로 메일을 보냅니다.`;
+    note.textContent = user.mail || value === "off" ? base : `${base} (이 서버는 메일 발송이 설정되지 않아 메일은 가지 않습니다.)`;
+  };
+  const select = h("select", {
+    "aria-label": "자동 점검 주기",
+    onchange: async () => {
+      select.disabled = true;
+      result.textContent = "";
+      try {
+        const { connection } = await api.post(`/connections/${encodeURIComponent(conn.id)}/schedule`, { schedule: select.value });
+        conn.schedule = connection.schedule;
+        describe(connection.schedule);
+        onChange(connection.schedule);
+      } catch (err) {
+        select.value = conn.schedule;
+        result.textContent = err.message;
+        result.className = "small error-text";
+      }
+      select.disabled = false;
+    },
+  }, SCHEDULE.map(([value, label]) => h("option", { value, selected: conn.schedule === value }, label)));
+  describe(conn.schedule);
+  const test = user.mail ? h("button", {
+    type: "button", class: "ghost",
+    onclick: async () => {
+      test.disabled = true;
+      result.className = "small";
+      try {
+        const { sentTo } = await api.post("/notify/test");
+        result.textContent = `${sentTo}로 테스트 메일을 보냈습니다.`;
+      } catch (err) {
+        result.textContent = err.message;
+        result.className = "small error-text";
+      }
+      test.disabled = false;
+    },
+  }, "테스트 메일 보내기") : null;
+  return h("div", {}, h("div", { class: "schedule-row" }, select, test, result), note);
+}
+
+function skeleton() {
+  return h("div", { class: "skeleton", "aria-label": "불러오는 중" },
+    h("div", { class: "sk-row" }), h("div", { class: "sk-chart" }), h("div", { class: "sk-row short" }));
+}
+
+// 지난달 합계와 월말 예상을 비교한 증감. 지난달이 0이면 비교하지 않는다.
+function deltaChip(forecast, previous) {
+  if (forecast === null || !previous) return null;
+  const pct = Math.round(((forecast - previous) / previous) * 100);
+  const tone = pct > 0 ? "up" : pct < 0 ? "down" : "flat";
+  return h("span", { class: `delta ${tone}` }, `${pct > 0 ? "▲" : pct < 0 ? "▼" : "–"} 지난달 대비 ${Math.abs(pct)}%`);
+}
+
+function costView(cost) {
+  if (cost.status !== "OK") return h("p", { class: "error-text" }, cost.message);
+  const fmtMoney = (amount) => money(amount, cost.currency);
+  const peak = Math.max(...cost.daily.map((d) => d.amount), 0.01);
+  const total = cost.services.reduce((sum, item) => sum + item.amount, 0) || 1;
+  const first = cost.daily[0].date.slice(5);
+  const last = cost.daily[cost.daily.length - 1].date.slice(5);
+  return h("div", {},
+    h("div", { class: "counts three" },
+      h("div", { class: "count" }, h("strong", {}, fmtMoney(cost.spent)), h("span", {}, `${cost.month} 사용액`)),
+      h("div", { class: "count" }, h("strong", {}, cost.forecast === null ? "-" : fmtMoney(cost.forecast)),
+        h("span", {}, "월말 예상"), deltaChip(cost.forecast, cost.previous)),
+      h("div", { class: "count" }, h("strong", {}, fmtMoney(cost.previous)), h("span", {}, "지난달"))),
+    h("p", { class: "small muted chart-title" }, "최근 30일 일별 비용"),
+    svg("svg", { class: "daily", viewBox: "0 0 600 104", role: "img", "aria-label": "최근 30일 일별 비용" },
+      svg("text", { x: 0, y: 10, class: "tick" }, fmtMoney(peak)),
+      svg("line", { x1: 0, x2: 600, y1: 16.5, y2: 16.5, class: "grid" }),
+      cost.daily.map((d, i) => {
+        const height = Math.round((d.amount / peak) * 62);
+        return svg("rect", { x: i * 20 + 2, y: 80 - height, width: 16, height, rx: 2,
+          class: i === cost.daily.length - 1 ? "bar today" : "bar" }, svg("title", {}, `${d.date} ${fmtMoney(d.amount)}`));
+      }),
+      svg("line", { x1: 0, x2: 600, y1: 80.5, y2: 80.5, class: "axis" }),
+      svg("text", { x: 0, y: 96, class: "tick" }, first),
+      svg("text", { x: 600, y: 96, class: "tick end" }, `${last} (오늘)`)),
+    cost.services.length ? breakdownView(cost.services, total, fmtMoney) : null,
+    h("p", { class: "small muted" }, `크레딧 적용 전 사용액 · 조회 ${fmt(cost.fetchedAt)} · 비용 조회는 건당 $0.01이라 6시간마다 갱신합니다.`));
+}
+
+// 서비스별 비용 도넛(상위 5개 + 기타)과 범례
+function breakdownView(services, total, fmtMoney) {
+  let offset = 25; // 12시 방향에서 시작
+  const rings = services.map((item, i) => {
+    const pct = (item.amount / total) * 100;
+    const ring = svg("circle", { cx: 21, cy: 21, r: 15.9155, class: `ring c${item.name === "기타" ? 5 : i}`,
+      "stroke-dasharray": `${pct.toFixed(2)} ${(100 - pct).toFixed(2)}`, "stroke-dashoffset": offset.toFixed(2) },
+      svg("title", {}, `${item.name} ${fmtMoney(item.amount)}`));
+    offset -= pct;
+    return ring;
+  });
+  return h("div", { class: "breakdown" },
+    svg("svg", { class: "donut", viewBox: "0 0 42 42", role: "img", "aria-label": "서비스별 비용 비중" },
+      svg("circle", { cx: 21, cy: 21, r: 15.9155, class: "ring c-track", fill: "none" }),
+      rings,
+      svg("text", { x: 21, y: 22, class: "total" }, fmtMoney(total)),
+      svg("text", { x: 21, y: 26.5, class: "sub" }, "이번 달")),
+    h("ul", { class: "legend" }, services.map((item, i) => h("li", {},
+      h("span", { class: `dot c${item.name === "기타" ? 5 : i}` }),
+      h("span", { class: "svc-name", title: item.name }, item.name),
+      h("span", { class: "amount" }, fmtMoney(item.amount), " ",
+        h("span", { class: "muted" }, `${Math.round((item.amount / total) * 100)}%`))))));
+}
+
+// 심각도 분포를 한 줄 누적 막대와 숫자 범례로 보여 준다
+function severityBar(counts) {
+  const keys = Object.keys(SEVERITY);
+  const total = keys.reduce((sum, key) => sum + (counts[key] || 0), 0);
+  let x = 0;
+  const rects = total
+    ? keys.filter((key) => counts[key]).map((key) => {
+      const width = (counts[key] / total) * 100;
+      const rect = svg("rect", { x: x.toFixed(2), y: 0, width: width.toFixed(2), height: 10, class: `sev-${key}` });
+      x += width;
+      return rect;
+    })
+    : [svg("rect", { x: 0, y: 0, width: 100, height: 10, class: "none" })];
+  return h("div", {},
+    svg("svg", { class: "sevbar", viewBox: "0 0 100 10", preserveAspectRatio: "none", role: "img", "aria-label": "심각도 분포" }, rects),
+    h("div", { class: "sevlegend" },
+      keys.map((key) => h("span", {}, `${SEVERITY[key]} `, h("strong", {}, counts[key] || 0))),
+      h("span", {}, "통과 ", h("strong", {}, counts.passed || 0))));
+}
+
+function ago(iso) {
+  if (!iso) return "-";
+  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "방금 전";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}시간 전`;
+  return `${Math.floor(seconds / 86400)}일 전`;
+}
+
+function securityView(conn, scan) {
+  const startButton = h("button", {
+    type: "button",
+    onclick: async () => {
+      startButton.disabled = true;
+      try {
+        const { scan: started } = await api.post("/scans", { connectionId: conn.id });
+        location.hash = `#/scans/${started.id}`;
+      } catch (err) {
+        startButton.disabled = false;
+        alert(err.message);
+      }
+    },
+  }, "스캔 시작");
+  if (!scan) return h("div", { class: "scan-row" }, h("span", { class: "muted" }, "아직 스캔이 없습니다."), startButton);
+  return h("div", {},
+    h("div", { class: "scan-row" },
+      h("span", {}, badge(scan.status), " ", h("span", { class: "muted small" }, fmt(scan.createdAt))),
+      h("span", { class: "scan-actions" }, h("a", { href: `#/scans/${scan.id}` }, "결과 보기"), startButton)),
+    scan.status === "DONE" ? severityBar(scan.counts) : null);
 }
 
 // ---------- 스캔 목록 ----------
@@ -329,12 +598,15 @@ async function deleteScan(scan) {
 // ---------- 시작 ----------
 async function route() {
   clearTimeout(pollTimer);
-  const hash = location.hash || "#/scans";
+  const hash = location.hash || "#/";
+  const section = hash.startsWith("#/scans") ? "#/scans" : hash;
+  for (const link of document.querySelectorAll("#nav a")) link.classList.toggle("active", link.getAttribute("href") === section);
   try {
     if (hash.startsWith("#/scans/")) await reportView(decodeURIComponent(hash.slice("#/scans/".length)));
+    else if (hash === "#/scans") await scansView();
     else if (hash === "#/connections") await connectionsView();
     else if (hash === "#/password") passwordView();
-    else await scansView();
+    else await dashboardView();
   } catch (err) {
     showError(err);
   }

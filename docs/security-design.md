@@ -9,7 +9,7 @@
 | 고객 액세스 키 유출 | 액세스 키를 받지 않는다. 고객 계정의 읽기 전용 Role을 임시 자격 증명으로만 맡는다 | `infra/customer-role.yaml` | 설계상 키 입력 화면이 없음 |
 | Confused deputy: 다른 사용자가 남의 계정 ID를 등록해 스캔 | 연결마다 서버가 ExternalId를 발급하고 사용자는 바꿀 수 없다. 고객 Role은 그 값만 받는다 | `gapcheck/connections.py`, 템플릿 `sts:ExternalId` 조건 | `tests/test_core.py`의 confused deputy 테스트, 시연(사용자 2명) |
 | 서비스 계정 안의 다른 주체가 고객 Role을 맡음 | 신뢰 정책에 `aws:PrincipalArn`으로 인스턴스 Role만 허용 | `infra/customer-role.yaml` | 콘솔 관리자로 AssumeRole 시도 시 거부 |
-| 과도한 권한 | 고객 쪽은 읽기 전용 관리형 정책. 서비스 쪽 인스턴스 Role은 AssumeRole(고객 Role 이름 고정)과 SSM 파라미터 2개 읽기만 | `infra/ec2.yaml` | `docs/architecture.md` IAM 표 |
+| 과도한 권한 | 고객 쪽은 읽기 전용 관리형 정책 + 비용 조회(ce:GetCost*) 인라인 정책. 서비스 쪽 인스턴스 Role은 AssumeRole(고객 Role 이름 고정)과 SSM 파라미터 2개 읽기만 | `infra/ec2.yaml` | `docs/architecture.md` IAM 표 |
 | 인스턴스 자격 증명 탈취(SSRF) | IMDSv2 필수, 앱은 사용자 입력 URL을 서버에서 요청하는 기능이 없다 | `infra/ec2.yaml`(`MetadataOptions`) | 템플릿 |
 | 비밀번호 대입·탈취 | scrypt 해시, 10자 이상, 5회 실패 시 15분 잠금, 실패 응답이 모두 같음 | `gapcheck/auth.py` | `tests/test_server.py` 로그인 테스트 |
 | 세션 탈취·CSRF | 세션 토큰은 SHA-256만 저장, 쿠키는 HttpOnly·Secure·SameSite=Strict, 상태 변경 요청은 `X-Requested-With` 헤더 요구 | `gapcheck/server.py`, `gapcheck/auth.py` | `test_csrf_header_required_for_writes` |
