@@ -280,20 +280,30 @@ function accountCard(conn, scan, onCost) {
     refresh.disabled = false;
   }
   loadCost(false);
+  const schedulePill = h("span", { class: "pill" });
+  const showSchedule = (value) => {
+    const label = Object.fromEntries(SCHEDULE)[value];
+    schedulePill.className = value === "off" ? "pill" : "pill on";
+    schedulePill.textContent = value === "off" ? "자동 점검 꺼짐" : `${label} 자동 점검`;
+  };
+  showSchedule(conn.schedule);
   return h("section", { class: "card account" },
     h("header", { class: "account-head" },
-      h("div", {}, h("span", { class: "eyebrow" }, "AWS 계정"), h("h2", {}, conn.accountId)), refresh),
+      h("div", {}, h("span", { class: "eyebrow" }, "AWS 계정"), h("h2", {}, conn.accountId),
+        h("div", { class: "pills" }, h("span", { class: "pill ok" }, "연결됨"), schedulePill,
+          h("span", { class: "pill" }, scan ? `마지막 점검 ${ago(scan.createdAt)}` : "점검 기록 없음"))),
+      refresh),
     h("h3", { class: "block" }, "비용"),
     costBox,
     h("h3", { class: "block" }, "보안 점검"),
     securityView(conn, scan),
     h("h3", { class: "block" }, "자동 점검·알림"),
-    scheduleView(conn));
+    scheduleView(conn, showSchedule));
 }
 
 const SCHEDULE = [["off", "끔"], ["daily", "매일"], ["weekly", "매주"]];
 
-function scheduleView(conn) {
+function scheduleView(conn, onChange) {
   const note = h("p", { class: "small muted" });
   const result = h("span", { class: "small" });
   const describe = (value) => {
@@ -310,7 +320,9 @@ function scheduleView(conn) {
       result.textContent = "";
       try {
         const { connection } = await api.post(`/connections/${encodeURIComponent(conn.id)}/schedule`, { schedule: select.value });
+        conn.schedule = connection.schedule;
         describe(connection.schedule);
+        onChange(connection.schedule);
       } catch (err) {
         select.value = conn.schedule;
         result.textContent = err.message;
@@ -376,13 +388,61 @@ function costView(cost) {
       svg("line", { x1: 0, x2: 600, y1: 80.5, y2: 80.5, class: "axis" }),
       svg("text", { x: 0, y: 96, class: "tick" }, first),
       svg("text", { x: 600, y: 96, class: "tick end" }, `${last} (오늘)`)),
-    cost.services.length ? h("ul", { class: "services" }, cost.services.map((item) => h("li", {},
-      h("span", { class: "svc-name" }, item.name),
-      h("span", { class: "amount" }, fmtMoney(item.amount), " ", h("span", { class: "muted" }, `${Math.round((item.amount / total) * 100)}%`)),
-      svg("svg", { viewBox: "0 0 100 4", preserveAspectRatio: "none", "aria-hidden": "true" },
-        svg("rect", { width: 100, height: 4, rx: 2, class: "track" }),
-        svg("rect", { width: ((item.amount / total) * 100).toFixed(1), height: 4, rx: 2, class: "fill" }))))) : null,
+    cost.services.length ? breakdownView(cost.services, total, fmtMoney) : null,
     h("p", { class: "small muted" }, `크레딧 적용 전 사용액 · 조회 ${fmt(cost.fetchedAt)} · 비용 조회는 건당 $0.01이라 6시간마다 갱신합니다.`));
+}
+
+// 서비스별 비용 도넛(상위 5개 + 기타)과 범례
+function breakdownView(services, total, fmtMoney) {
+  let offset = 25; // 12시 방향에서 시작
+  const rings = services.map((item, i) => {
+    const pct = (item.amount / total) * 100;
+    const ring = svg("circle", { cx: 21, cy: 21, r: 15.9155, class: `ring c${item.name === "기타" ? 5 : i}`,
+      "stroke-dasharray": `${pct.toFixed(2)} ${(100 - pct).toFixed(2)}`, "stroke-dashoffset": offset.toFixed(2) },
+      svg("title", {}, `${item.name} ${fmtMoney(item.amount)}`));
+    offset -= pct;
+    return ring;
+  });
+  return h("div", { class: "breakdown" },
+    svg("svg", { class: "donut", viewBox: "0 0 42 42", role: "img", "aria-label": "서비스별 비용 비중" },
+      svg("circle", { cx: 21, cy: 21, r: 15.9155, class: "ring c-track", fill: "none" }),
+      rings,
+      svg("text", { x: 21, y: 22, class: "total" }, fmtMoney(total)),
+      svg("text", { x: 21, y: 26.5, class: "sub" }, "이번 달")),
+    h("ul", { class: "legend" }, services.map((item, i) => h("li", {},
+      h("span", { class: `dot c${item.name === "기타" ? 5 : i}` }),
+      h("span", { class: "svc-name", title: item.name }, item.name),
+      h("span", { class: "amount" }, fmtMoney(item.amount), " ",
+        h("span", { class: "muted" }, `${Math.round((item.amount / total) * 100)}%`))))));
+}
+
+// 심각도 분포를 한 줄 누적 막대와 숫자 범례로 보여 준다
+function severityBar(counts) {
+  const keys = Object.keys(SEVERITY);
+  const total = keys.reduce((sum, key) => sum + (counts[key] || 0), 0);
+  let x = 0;
+  const rects = total
+    ? keys.filter((key) => counts[key]).map((key) => {
+      const width = (counts[key] / total) * 100;
+      const rect = svg("rect", { x: x.toFixed(2), y: 0, width: width.toFixed(2), height: 10, class: `sev-${key}` });
+      x += width;
+      return rect;
+    })
+    : [svg("rect", { x: 0, y: 0, width: 100, height: 10, class: "none" })];
+  return h("div", {},
+    svg("svg", { class: "sevbar", viewBox: "0 0 100 10", preserveAspectRatio: "none", role: "img", "aria-label": "심각도 분포" }, rects),
+    h("div", { class: "sevlegend" },
+      keys.map((key) => h("span", {}, `${SEVERITY[key]} `, h("strong", {}, counts[key] || 0))),
+      h("span", {}, "통과 ", h("strong", {}, counts.passed || 0))));
+}
+
+function ago(iso) {
+  if (!iso) return "-";
+  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "방금 전";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}시간 전`;
+  return `${Math.floor(seconds / 86400)}일 전`;
 }
 
 function securityView(conn, scan) {
@@ -404,7 +464,7 @@ function securityView(conn, scan) {
     h("div", { class: "scan-row" },
       h("span", {}, badge(scan.status), " ", h("span", { class: "muted small" }, fmt(scan.createdAt))),
       h("span", { class: "scan-actions" }, h("a", { href: `#/scans/${scan.id}` }, "결과 보기"), startButton)),
-    scan.status === "DONE" ? countsView(scan.counts) : null);
+    scan.status === "DONE" ? severityBar(scan.counts) : null);
 }
 
 // ---------- 스캔 목록 ----------
