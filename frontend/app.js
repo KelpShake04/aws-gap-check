@@ -221,26 +221,59 @@ async function dashboardView() {
   const [{ connections }, { scans }] = await Promise.all([api.get("/connections"), api.get("/scans")]);
   const active = connections.filter((c) => c.status === "ACTIVE");
   const waiting = connections.length - active.length;
+  const kpis = h("div", { class: "kpis" });
+  const costs = new Map();
+  const latest = new Map(active.map((c) => [c.id, scans.find((s) => s.connectionId === c.id)]));
+  const refreshKpis = () => kpis.replaceChildren(...kpiTiles(active.length, costs, latest));
+  refreshKpis();
   render(
-    h("h1", {}, "대시보드"),
-    active.length ? null : h("section", { class: "card" },
-      h("p", {}, "연결된 계정이 없습니다. ", h("a", { href: "#/connections" }, "계정을 연결"),
-        "하면 비용과 보안 점검 결과를 여기서 한눈에 볼 수 있습니다.")),
+    h("div", { class: "page-head" },
+      h("h1", {}, "대시보드"),
+      h("span", { class: "muted small" }, `연결된 계정 ${active.length}개`)),
+    active.length ? kpis : h("section", { class: "card empty" },
+      h("p", {}, "연결된 계정이 없습니다."),
+      h("p", { class: "muted" }, "계정을 연결하면 비용과 보안 점검 결과를 여기서 한눈에 볼 수 있습니다."),
+      h("a", { class: "button", href: "#/connections" }, "계정 연결하기")),
     waiting ? h("p", { class: "small muted" }, `검증이 끝나지 않은 연결 ${waiting}개 — `,
       h("a", { href: "#/connections" }, "계정 연결에서 마무리"), "하세요.") : null,
-    active.map((conn) => accountCard(conn, scans.find((s) => s.connectionId === conn.id))));
+    h("div", { class: "accounts" }, active.map((conn) => accountCard(conn, latest.get(conn.id), (cost) => {
+      costs.set(conn.id, cost);
+      refreshKpis();
+    }))));
   if (scans.some((s) => !FINAL.includes(s.status))) pollTimer = setTimeout(route, 10000);
 }
 
-function accountCard(conn, scan) {
-  const costBox = h("div", {}, h("p", { class: "muted" }, "비용을 불러오는 중…"));
-  const refresh = h("button", { type: "button", class: "link", disabled: true, onclick: () => loadCost(true) }, "새로고침");
+// 전체 계정 요약. 비용은 불러온 계정만 합친다(아직이면 "…", 실패한 계정은 빠진다).
+function kpiTiles(accountCount, costs, latest) {
+  const loaded = [...costs.values()];
+  const ok = loaded.filter((c) => c.status === "OK");
+  const pending = costs.size < accountCount;
+  const currency = ok.length ? ok[0].currency : "USD";
+  const sum = (key) => ok.reduce((total, c) => total + (c[key] || 0), 0);
+  const risky = [...latest.values()].reduce((total, s) =>
+    total + (s && s.status === "DONE" && s.counts ? (s.counts.critical || 0) + (s.counts.high || 0) : 0), 0);
+  const scanned = [...latest.values()].filter((s) => s && s.status === "DONE").length;
+  const tile = (label, value, note, tone) => h("div", { class: `kpi ${tone || ""}` },
+    h("span", { class: "kpi-label" }, label), h("strong", {}, value), note ? h("span", { class: "kpi-note" }, note) : null);
+  return [
+    tile("이번 달 사용액", pending ? "…" : money(sum("spent"), currency), "전체 계정 합계"),
+    tile("월말 예상", pending ? "…" : money(sum("forecast"), currency), "예측이 있는 계정만"),
+    tile("긴급 보안 항목", scanned ? String(risky) : "-", scanned ? "치명 + 높음 (최신 스캔)" : "스캔 결과 없음", risky ? "bad" : ""),
+    tile("연결 계정", String(accountCount), `스캔 완료 ${scanned}개`),
+  ];
+}
+
+function accountCard(conn, scan, onCost) {
+  const costBox = h("div", {}, skeleton());
+  const refresh = h("button", { type: "button", class: "ghost", disabled: true, onclick: () => loadCost(true) }, "↻ 새로고침");
   async function loadCost(force) {
     refresh.disabled = true;
+    if (force) costBox.replaceChildren(skeleton());
     try {
       const path = `/connections/${encodeURIComponent(conn.id)}/cost`;
       const { cost } = force ? await api.post(`${path}/refresh`) : await api.get(path);
       costBox.replaceChildren(costView(cost));
+      onCost(cost);
     } catch (err) {
       costBox.replaceChildren(h("p", { class: "error-text" }, err.message));
     }
@@ -249,10 +282,24 @@ function accountCard(conn, scan) {
   loadCost(false);
   return h("section", { class: "card account" },
     h("header", { class: "account-head" },
-      h("h2", {}, "계정 ", h("code", {}, conn.accountId)), refresh),
+      h("div", {}, h("span", { class: "eyebrow" }, "AWS 계정"), h("h2", {}, conn.accountId)), refresh),
+    h("h3", { class: "block" }, "비용"),
     costBox,
     h("h3", { class: "block" }, "보안 점검"),
     securityView(conn, scan));
+}
+
+function skeleton() {
+  return h("div", { class: "skeleton", "aria-label": "불러오는 중" },
+    h("div", { class: "sk-row" }), h("div", { class: "sk-chart" }), h("div", { class: "sk-row short" }));
+}
+
+// 지난달 합계와 월말 예상을 비교한 증감. 지난달이 0이면 비교하지 않는다.
+function deltaChip(forecast, previous) {
+  if (forecast === null || !previous) return null;
+  const pct = Math.round(((forecast - previous) / previous) * 100);
+  const tone = pct > 0 ? "up" : pct < 0 ? "down" : "flat";
+  return h("span", { class: `delta ${tone}` }, `${pct > 0 ? "▲" : pct < 0 ? "▼" : "–"} 지난달 대비 ${Math.abs(pct)}%`);
 }
 
 function costView(cost) {
@@ -260,24 +307,32 @@ function costView(cost) {
   const fmtMoney = (amount) => money(amount, cost.currency);
   const peak = Math.max(...cost.daily.map((d) => d.amount), 0.01);
   const total = cost.services.reduce((sum, item) => sum + item.amount, 0) || 1;
+  const first = cost.daily[0].date.slice(5);
+  const last = cost.daily[cost.daily.length - 1].date.slice(5);
   return h("div", {},
     h("div", { class: "counts three" },
       h("div", { class: "count" }, h("strong", {}, fmtMoney(cost.spent)), h("span", {}, `${cost.month} 사용액`)),
-      h("div", { class: "count" }, h("strong", {}, cost.forecast === null ? "-" : fmtMoney(cost.forecast)), h("span", {}, "월말 예상")),
+      h("div", { class: "count" }, h("strong", {}, cost.forecast === null ? "-" : fmtMoney(cost.forecast)),
+        h("span", {}, "월말 예상"), deltaChip(cost.forecast, cost.previous)),
       h("div", { class: "count" }, h("strong", {}, fmtMoney(cost.previous)), h("span", {}, "지난달"))),
-    h("p", { class: "small muted" }, "최근 30일 일별 비용"),
-    svg("svg", { class: "daily", viewBox: "0 0 600 80", role: "img", "aria-label": "최근 30일 일별 비용" },
+    h("p", { class: "small muted chart-title" }, "최근 30일 일별 비용"),
+    svg("svg", { class: "daily", viewBox: "0 0 600 104", role: "img", "aria-label": "최근 30일 일별 비용" },
+      svg("text", { x: 0, y: 10, class: "tick" }, fmtMoney(peak)),
+      svg("line", { x1: 0, x2: 600, y1: 16.5, y2: 16.5, class: "grid" }),
       cost.daily.map((d, i) => {
-        const height = Math.round((d.amount / peak) * 70);
-        return svg("rect", { x: i * 20 + 2, y: 78 - height, width: 16, height,
+        const height = Math.round((d.amount / peak) * 62);
+        return svg("rect", { x: i * 20 + 2, y: 80 - height, width: 16, height, rx: 2,
           class: i === cost.daily.length - 1 ? "bar today" : "bar" }, svg("title", {}, `${d.date} ${fmtMoney(d.amount)}`));
       }),
-      svg("line", { x1: 0, x2: 600, y1: 78.5, y2: 78.5, class: "axis" })),
+      svg("line", { x1: 0, x2: 600, y1: 80.5, y2: 80.5, class: "axis" }),
+      svg("text", { x: 0, y: 96, class: "tick" }, first),
+      svg("text", { x: 600, y: 96, class: "tick end" }, `${last} (오늘)`)),
     cost.services.length ? h("ul", { class: "services" }, cost.services.map((item) => h("li", {},
-      h("span", {}, item.name), h("span", { class: "amount" }, fmtMoney(item.amount)),
+      h("span", { class: "svc-name" }, item.name),
+      h("span", { class: "amount" }, fmtMoney(item.amount), " ", h("span", { class: "muted" }, `${Math.round((item.amount / total) * 100)}%`)),
       svg("svg", { viewBox: "0 0 100 4", preserveAspectRatio: "none", "aria-hidden": "true" },
-        svg("rect", { width: 100, height: 4, class: "track" }),
-        svg("rect", { width: ((item.amount / total) * 100).toFixed(1), height: 4, class: "fill" }))))) : null,
+        svg("rect", { width: 100, height: 4, rx: 2, class: "track" }),
+        svg("rect", { width: ((item.amount / total) * 100).toFixed(1), height: 4, rx: 2, class: "fill" }))))) : null,
     h("p", { class: "small muted" }, `크레딧 적용 전 사용액 · 조회 ${fmt(cost.fetchedAt)} · 비용 조회는 건당 $0.01이라 6시간마다 갱신합니다.`));
 }
 
@@ -295,9 +350,11 @@ function securityView(conn, scan) {
       }
     },
   }, "스캔 시작");
-  if (!scan) return h("p", { class: "muted" }, "아직 스캔이 없습니다. ", startButton);
+  if (!scan) return h("div", { class: "scan-row" }, h("span", { class: "muted" }, "아직 스캔이 없습니다."), startButton);
   return h("div", {},
-    h("p", {}, badge(scan.status), " ", fmt(scan.createdAt), " ", h("a", { href: `#/scans/${scan.id}` }, "결과 보기"), " ", startButton),
+    h("div", { class: "scan-row" },
+      h("span", {}, badge(scan.status), " ", h("span", { class: "muted small" }, fmt(scan.createdAt))),
+      h("span", { class: "scan-actions" }, h("a", { href: `#/scans/${scan.id}` }, "결과 보기"), startButton)),
     scan.status === "DONE" ? countsView(scan.counts) : null);
 }
 
@@ -433,6 +490,8 @@ async function deleteScan(scan) {
 async function route() {
   clearTimeout(pollTimer);
   const hash = location.hash || "#/";
+  const section = hash.startsWith("#/scans") ? "#/scans" : hash;
+  for (const link of document.querySelectorAll("#nav a")) link.classList.toggle("active", link.getAttribute("href") === section);
   try {
     if (hash.startsWith("#/scans/")) await reportView(decodeURIComponent(hash.slice("#/scans/".length)));
     else if (hash === "#/scans") await scansView();
