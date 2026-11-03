@@ -1,6 +1,6 @@
 # ERD (MySQL 8.4)
 
-스키마 원본은 `db/init/01-schema.sql`. GitHub에서 이 파일을 열면 그림으로 보인다.
+스키마 원본은 `db/init/01-schema.sql`(이미 배포된 DB에는 `db/migrations/`의 SQL을 적용). GitHub에서 이 파일을 열면 그림으로 보인다.
 
 ```mermaid
 erDiagram
@@ -31,6 +31,7 @@ erDiagram
         CHAR(12) account_id
         VARCHAR(16) status "PENDING, ACTIVE, FAILED"
         VARCHAR(500) message
+        VARCHAR(8) schedule "off, daily, weekly (자동 점검·알림)"
         DATETIME created_at
         DATETIME verified_at
     }
