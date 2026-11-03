@@ -113,7 +113,7 @@ def explainer_factory(env, store, ssm_client):
                 def fallback_generate(system, user, schema):
                     return llm.generate_json(system, user, schema, model=fallback_model, api_key=key)
         return explain.Explainer(generate, store, fallback_generate=fallback_generate,
-                                 model=model, max_rpm=max_rpm)
+                                 model=model, fallback_model=fallback_model, max_rpm=max_rpm)
 
     return make_explainer
 

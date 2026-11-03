@@ -1,3 +1,4 @@
+import threading
 import unittest
 from datetime import date, datetime, timedelta, timezone
 
@@ -95,6 +96,30 @@ class ProviderTest(unittest.TestCase):
         self.provider.get("u2", CONN)
         self.provider.get("u1", {**CONN, "id": "fedcba9876543210"})
         self.assertEqual(len(self.ce.usage_calls), 3)
+
+    def test_slow_connection_does_not_block_others(self):
+        started, release = threading.Event(), threading.Event()
+        slow, fast = FakeCe(rows()), FakeCe(rows())
+        original = slow.get_cost_and_usage
+
+        def blocking(**kwargs):
+            started.set()
+            release.wait(5)
+            return original(**kwargs)
+        slow.get_cost_and_usage = blocking
+        ces = iter([slow, fast])
+        provider = billing.CostProvider(self.sts, lambda credentials: next(ces), now=self.clock)
+        thread = threading.Thread(target=provider.get, args=("u1", CONN))
+        thread.start()
+        self.assertTrue(started.wait(5))
+        other = []
+        worker = threading.Thread(target=lambda: other.append(provider.get("u1", {**CONN, "id": "fedcba9876543210"})))
+        worker.start()
+        worker.join(2)  # 느린 연결을 기다리지 않고 끝나야 한다
+        release.set()
+        self.assertEqual([d["status"] for d in other], ["OK"])
+        thread.join(5)
+        self.assertEqual(len(slow.usage_calls), 1)
 
     def test_no_permission_is_reported_and_cached_briefly(self):
         self.ce.fail_code = "AccessDeniedException"

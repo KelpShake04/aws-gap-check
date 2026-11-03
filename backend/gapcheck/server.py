@@ -12,6 +12,7 @@ import json
 import logging
 import pathlib
 import re
+import threading
 from dataclasses import dataclass, field
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -60,6 +61,7 @@ class Deps:
     cost: Any = None  # get(sub, conn, force) -> 비용 요약 dict
     notifier: Any = None  # send_test(email). 메일 설정이 없으면 None
     mail_sent: dict = field(default_factory=dict)  # 사용자별 마지막 테스트 메일 시각
+    mail_lock: Any = field(default_factory=threading.Lock)  # mail_sent 확인·기록을 한 번에
 
 
 @dataclass
@@ -130,10 +132,12 @@ def send_test_mail(call):
     if deps.notifier is None:
         raise Unavailable("메일 발송이 설정되지 않았습니다.")
     now = deps.now()
-    last = deps.mail_sent.get(call.user["id"])
-    if last and (now - last).total_seconds() < MAIL_TEST_SECONDS:
-        raise TooMany("테스트 메일은 1분에 한 번만 보낼 수 있습니다.")
-    deps.mail_sent[call.user["id"]] = now
+    # 실패한 시도도 기록한다: 설정이 틀린 채로 SES를 연달아 부르지 않게 1분을 기다린다
+    with deps.mail_lock:
+        last = deps.mail_sent.get(call.user["id"])
+        if last and (now - last).total_seconds() < MAIL_TEST_SECONDS:
+            raise TooMany("테스트 메일은 1분에 한 번만 보낼 수 있습니다.")
+        deps.mail_sent[call.user["id"]] = now
     try:
         deps.notifier.send_test(call.user["email"])
     except Exception:

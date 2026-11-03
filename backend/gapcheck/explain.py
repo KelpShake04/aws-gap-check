@@ -113,14 +113,19 @@ class Explainer:
 
     generate가 None이면(키나 모델 설정이 없으면) 모두 폴백한다.
     fallback_generate는 주 모델이 과부하로 계속 실패할 때만 쓰는 보조 모델 호출이다.
+    보조 모델의 해설은 fallback_model 이름으로 캐시하고, 조회는 주 모델 이름으로만 한다
+    (다음 스캔에서 주 모델 해설로 다시 채운다).
     """
 
-    def __init__(self, generate=None, cache=None, *, fallback_generate=None, model: str = "", max_rpm: int = 10,
+    def __init__(self, generate=None, cache=None, *, fallback_generate=None, model: str = "",
+                 fallback_model: str = "", max_rpm: int = 10,
                  remaining_ms=lambda: 10 ** 9, clock=time.monotonic, sleep=time.sleep):
         self.generate = generate
         self.fallback_generate = fallback_generate
         self.cache = cache
         self.model = model
+        self.fallback_model = fallback_model
+        self._answered_by = model
         self.interval = 60.0 / max(1, max_rpm)
         self.remaining_ms = remaining_ms
         self.clock = clock
@@ -140,7 +145,7 @@ class Explainer:
         if result is None:
             return fallback_explanation(group), "prowler"
         if self.cache is not None:
-            self.cache.put_explanation(group["checkId"], PROMPT_VERSION, self.model, result)
+            self.cache.put_explanation(group["checkId"], PROMPT_VERSION, self._answered_by, result)
         return result, "gemini"
 
     def summarize(self, groups: list):
@@ -165,6 +170,7 @@ class Explainer:
                 self.calls += 1
                 result = validate(self.generate(system, user, schema), schema)
                 self._failures = 0
+                self._answered_by = self.model
                 return result
             except llm.RateLimited as err:
                 wait = err.retry_after if err.retry_after is not None else self.interval
@@ -195,6 +201,7 @@ class Explainer:
                 result = validate(self.fallback_generate(system, user, schema), schema)
                 logger.warning("primary model failed (%s); fallback model answered", primary_err)
                 self._failures = 0
+                self._answered_by = self.fallback_model
                 return result
             except (llm.LLMError, ValidationError) as err:
                 logger.warning("fallback model failed: %s", err)
