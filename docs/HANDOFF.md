@@ -30,15 +30,17 @@ AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국�
 - **AI 해설**: 주 모델 `gemini-3.1-flash-lite`(`.env`의 `GEMINI_MODEL`, 스택 파라미터 `GeminiModel`은 비어 있음). 5xx·타임아웃이면 10초, 20초 간격으로 3번 시도 후 보조 모델 `gemini-3.5-flash-lite`(`GEMINI_FALLBACK_MODEL`, compose 기본값)를 한 번 시도하고, 그래도 안 되면 Prowler 원문(영어)으로 대체한다. 해설 캐시(`explanations`)는 만료가 없다.
 - main에 있는 것: 앱 전체, `infra/ec2.yaml`, CI(unittest 168개 + MySQL 서비스, cfn-lint), 재시도·폴백(PR #16, #17), 이메일 비ASCII 거부(PR #18), 대시보드·비용·알림(PR #20), 서버리스 코드는 `legacy/serverless/`. 열린 PR 없음.
 - 확인한 것: EC2에서 본인 계정 실제 스캔(14개 항목) + Gemini 해설, 캐시로 재스캔 70초대. 로컬 데모 모드에서 대시보드, 자동 점검 → 스캔 자동 생성 → 알림 메일(로그) 흐름. 배포 후 사이트 200과 새 API 라우트 확인.
-- **아직 못 확인한 것**: 실제 AWS Cost Explorer 호출(고객 Role 스택이 옛 템플릿이라 권한이 없을 수 있다), 실제 SES 발송, 보조 모델 전환(503이 날 때만 발동).
-- 사용자 몫(계정 설정이라 사용자 결정): ① 연결한 계정의 스택 `aws-gap-check-readonly-role`을 최신 `infra/customer-role.yaml`로 업데이트(비용 권한), Cost Explorer를 안 켠 계정이면 Billing 콘솔에서 켜기. ② 알림 메일: SES(서울)에서 보내는·받는 이메일 확인(샌드박스), 서버 `.env`에 `MAIL_FROM`·`SITE_URL` 추가, 스택에 `MailFrom` 파라미터(IAM 정책만 바뀜) 후 `docker compose up -d`. `MAIL_FROM`이 비어 있으면 알림 기능만 꺼진다. ③ 역할 배정(`docs/ROLES.md`), 제출 마감일 확인, 조원 계정 연결 여부 결정, 시연 후 EC2 중지·정리.
+- **2026-11-03 비용·알림 켬**: 본인 계정 스택 `aws-gap-check-readonly-role`을 최신 템플릿으로 업데이트하고 `GetCostAndUsage` 호출 성공(아직 금액 0). SES(서울, 샌드박스)에 개발자 Gmail 주소를 이메일 ID로 확인, 스택 `aws-gap-check-ec2`에 `MailFrom` 파라미터를 넣어 앱 Role에 `ses:SendEmail` 추가, 서버 `.env`에 `MAIL_FROM`·`SITE_URL`을 넣고 `docker compose up -d`. 앱 컨테이너에서 테스트 메일 발송 성공(SES 전달 시도 1, 반송 0).
+- **운영 스택 주의**: 스택에 올린 템플릿은 `infra/ec2.yaml`에서 UserData의 `MAIL_FROM`·`SITE_URL` 두 줄만 뺀 것이다(값은 `.env`에 직접 넣었다). main 템플릿 그대로 업데이트하면 UserData가 바뀌어 인스턴스가 중지·재시작되거나 교체될 수 있으니, change set에서 `Instance`가 바뀌지 않는지 먼저 본다. 또 이 스택의 `GetTemplate` 결과는 한글이 `?`로 나온다. 그걸 고쳐서 올리면 UserData가 바뀌므로 repo 파일(`--template-body file://...`)로 올린다.
+- **아직 못 확인한 것**: 연결 계정의 실제 비용 금액 표시(현재 0), 알림 메일의 Gmail 수신 위치(보내는 주소가 `@gmail.com`인데 SES로 보내 DMARC 정렬이 안 되므로 스팸함에 갈 수 있다), 보조 모델 전환(503이 날 때만 발동).
+- 사용자 몫(계정 설정이라 사용자 결정): 역할 배정(`docs/ROLES.md`), 제출 마감일 확인, 조원 계정 연결 여부 결정, 시연 후 EC2 중지·정리. 조원 계정을 연결하면 그 계정에도 최신 `infra/customer-role.yaml`(비용 권한)이 필요하고, SES 샌드박스라 알림을 받을 주소도 SES에서 확인해야 한다.
 - 외부 공유 전 주의: 스캔 결과·대시보드 캡처에 계정 ID·이메일·인스턴스 ID가 보인다. 가린 뒤에 공유한다(데모 모드 화면은 가짜 값이라 안전).
 
 ## 이전 상태 (서버리스 버전, 2026-10-28, 보관)
 서버리스 구현(PR #3)은 코드 완성까지 했고 실제 배포는 하지 않은 채 컨테이너 구성으로 전환했다. 관련 파일은 `legacy/serverless/`(README 참고)에 있다.
 
 ## 다음 단계 (권장 순서)
-1. 비용·알림을 실제로 켠다(위 "사용자 몫" ①②). 켠 뒤 대시보드에서 비용 표시와 "테스트 메일 보내기"를 확인한다.
+1. 대시보드에서 비용 표시와 "테스트 메일 보내기"를 확인한다. 메일이 스팸함에 있으면 "스팸 아님"으로 표시해 둔다.
 2. 시연 직전에 스캔을 한 번 더 돌려 해설 캐시가 차 있는지 확인한다.
 3. 조원 계정 연결 시연(가능하면), 시연 영상, 장표(역할은 `docs/ROLES.md`, 시연 순서는 `docs/demo-runbook.md`).
 4. 사용하지 않는 동안 EC2를 중지해 비용을 줄인다(시연 전 시작 후 DuckDNS IP 갱신 확인). 자동 점검·알림은 서버가 켜져 있을 때만 돈다.
