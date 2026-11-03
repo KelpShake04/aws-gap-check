@@ -5,7 +5,7 @@ FROM python:3.12-slim AS deps
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --require-hashes --no-deps --target /vendor -r /tmp/requirements.txt
 
-FROM public.ecr.aws/prowler-cloud/prowler:5.46.0
+FROM public.ecr.aws/prowler-cloud/prowler:5.47.0
 USER root
 RUN mkdir -p /data && chown prowler /data
 COPY --from=deps /vendor /app/vendor

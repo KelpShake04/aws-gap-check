@@ -8,7 +8,7 @@
 [브라우저] ──HTTPS──> caddy (80/443, 인증서 자동)
                         └─> app:8080  (Python 표준 라이브러리 HTTP 서버 + 스캔 작업자 스레드)
                                ├─ mysql:3306  (MySQL 8.4.9, 앱 계정은 SELECT/INSERT/UPDATE/DELETE만)
-                               ├─ Prowler 5.46 (같은 이미지 안, 셸 없이 인자 목록으로 실행)
+                               ├─ Prowler 5.47 (같은 이미지 안, 셸 없이 인자 목록으로 실행)
                                └─ Gemini API  (키는 SSM에서 읽음, 없으면 Prowler 원문)
 ```
 
