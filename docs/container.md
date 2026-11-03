@@ -107,6 +107,13 @@ python3 -m unittest                # DB·scrypt가 필요한 테스트는 건너
 - **TLS**: caddy가 맡는다(앱은 HTTP만, 외부에 포트를 열지 않음).
 - **서버리스 코드**: 지우지 않고 `legacy/serverless/`로 옮겨 두었다(`handlers`, `infra/service.yaml` 등, 설명은 그 폴더의 README). 공용 로직(`scans.create`, `results.store_and_explain`, `views.py`)은 두 구성이 같이 쓴다. 다만 프런트엔드는 컨테이너 로그인으로 바뀌어 서버리스 배포 경로는 더 이상 맞지 않는다. 
 
+## 대시보드·비용·자동 점검·알림
+
+- 홈(`#/`)이 대시보드다. 데모 모드(`DEMO_FIXTURE`)에서는 비용이 날짜에서 계산한 가짜 값이고, 알림 메일은 보내지 않고 서버 로그에 `DEMO MAIL`로 남는다.
+- 자동 점검은 작업자 스레드가 60초마다 확인한다. 서버(또는 로컬 compose)가 켜져 있을 때만 돈다.
+- **이미 만든 DB 업데이트**: 스키마가 바뀌면 `db/migrations/`의 SQL을 날짜순으로 root로 한 번씩 실행한다(앱 계정은 ALTER 권한이 없다). 파일 머리말에 명령이 있다. 지금은 `2026-11-03-schedule.sql` 하나(connections.schedule).
+- 설계: `docs/superpowers/specs/2026-11-03-billing-dashboard.md`, `2026-11-03-scheduled-alerts.md`.
+
 ## 알려진 한계
 
 - 같은 계정에 비밀번호를 5번 틀리면 15분 잠긴다. 남이 일부러 잠글 수 있다(시연용으로 허용).

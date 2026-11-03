@@ -1,7 +1,7 @@
-# 인수인계 (2026-10-29 기준)
+# 인수인계 (2026-11-03 기준)
 
 ## 한 줄 요약
-AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국어로 위험·영향·조치를 해설하는 웹 서비스. 팀 5명(2조), 개발은 사용자 1명이 전담. 발표 12/1.
+AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국어로 위험·영향·조치를 해설하고, 계정 비용을 보여 주며, 주기적으로 점검해 새 위험 항목을 이메일로 알리는 웹 서비스. 팀 5명(2조), 개발은 사용자 1명이 전담. 발표 12/1.
 
 ## 결정된 것 (사용자 확정)
 - 형태: EC2 한 대에서 Docker Compose로 웹사이트 제공(앱 자체 로그인, HTTPS는 caddy + DuckDNS). 2026-10-28 사용자 결정으로 서버리스에서 변경.
@@ -19,21 +19,27 @@ AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국�
 - 평가 기준(IaC 필수 여부, 시연 시간), 비용 상한, 조원 참여 여부.
 - 조원 계정 연결 동의와 계정 종류.
 
-## 현재 상태 (2026-10-29, 배포 완료)
+## 현재 상태 (2026-11-03, 배포 완료)
 - 배포 구조는 EC2 한 대 + Docker Compose(app, mysql, caddy). 설계는 `docs/superpowers/specs/2026-10-28-container-redesign.md`, 실행·구조·한계는 `docs/container.md`, ERD는 `docs/erd.md`, 구성·보안은 `docs/architecture.md`·`docs/security-design.md`.
-- **배포됨**: 스택 `aws-gap-check-ec2`(ap-northeast-2b, `c7i-flex.large`: Free Tier 계정이라 `t3.medium`이 거부됨), `https://agc-kelp04.duckdns.org`. SSM 파라미터 이름은 `/gapcheck/...`(`aws`·`ssm` 접두사는 예약어).
+- **배포됨**: 스택 `aws-gap-check-ec2`(ap-northeast-2b, `c7i-flex.large`: Free Tier 계정이라 `t3.medium`이 거부됨), `https://agc-kelp04.duckdns.org`. SSM 파라미터 이름은 `/gapcheck/...`(`aws`·`ssm` 접두사는 예약어). 2026-11-03에 PR #20(아래)까지 main에 병합하고 EC2에 반영했다(`git pull` + `docker compose up -d --build`).
+- **2026-11-03 추가 기능(PR #20, 설계 `docs/superpowers/specs/2026-11-03-billing-dashboard.md`, `2026-11-03-scheduled-alerts.md`)**
+  - 대시보드 홈(`#/`): 계정별 카드(이번 달 비용·월말 예상·지난달, 최근 30일 일별 차트, 서비스별 도넛, 최신 스캔 심각도, 자동 점검 설정) + 전체 요약. UI는 사이드바 레이아웃, 다크 모드 지원.
+  - 비용 조회(Cost Explorer): 고객 Role의 `ce:GetCostAndUsage`/`ce:GetCostForecast`. 호출당 $0.01이라 6시간 캐시, 새로고침 5분 제한. 크레딧·환불 제외 금액.
+  - 자동 점검(끔/매일/매주) + 이메일 알림: 직전 스캔에 없던 치명·높음 항목이 생기면 로그인 이메일로 SES 메일. 테스트 메일 버튼.
+  - DB: `connections.schedule` 열 추가. **EC2 DB에는 2026-11-03에 `db/migrations/2026-11-03-schedule.sql` 내용을 SSM으로 적용 완료**(기존 연결 3개 유지). 새로 만드는 DB는 `db/init`에 이미 포함. 이후 스키마 변경은 `db/migrations/`에 SQL을 추가하고 root로 한 번 실행한다.
 - **AI 해설**: 주 모델 `gemini-3.1-flash-lite`(`.env`의 `GEMINI_MODEL`, 스택 파라미터 `GeminiModel`은 비어 있음). 5xx·타임아웃이면 10초, 20초 간격으로 3번 시도 후 보조 모델 `gemini-3.5-flash-lite`(`GEMINI_FALLBACK_MODEL`, compose 기본값)를 한 번 시도하고, 그래도 안 되면 Prowler 원문(영어)으로 대체한다. 해설 캐시(`explanations`)는 만료가 없다.
-- main에 있는 것: 앱 전체, `infra/ec2.yaml`, CI(unittest 140개 + MySQL 서비스, cfn-lint), 재시도·폴백(PR #16, #17), 서버리스 코드는 `legacy/serverless/`.
-- 확인한 것: EC2에서 본인 계정 실제 스캔(14개 항목) + Gemini 해설, 캐시로 재스캔 70초대. 보조 모델 전환은 503이 날 때만 발동해서 실제 전환은 아직 못 봤다.
-- 열린 PR: #18(이메일 비ASCII 거부). 깨진 이메일이 계정에 저장돼 로그인이 막힌 적이 있다.
-- 사용자 몫: 역할 배정(`docs/ROLES.md`), 제출 마감일 확인, 조원 계정 연결 여부 결정, 시연 후 EC2 중지·정리.
-- 외부 공유 전 주의: 스캔 결과 캡처에 계정 ID·이메일·인스턴스 ID가 보인다. 가린 뒤에 공유한다.
+- main에 있는 것: 앱 전체, `infra/ec2.yaml`, CI(unittest 168개 + MySQL 서비스, cfn-lint), 재시도·폴백(PR #16, #17), 이메일 비ASCII 거부(PR #18), 대시보드·비용·알림(PR #20), 서버리스 코드는 `legacy/serverless/`. 열린 PR 없음.
+- 확인한 것: EC2에서 본인 계정 실제 스캔(14개 항목) + Gemini 해설, 캐시로 재스캔 70초대. 로컬 데모 모드에서 대시보드, 자동 점검 → 스캔 자동 생성 → 알림 메일(로그) 흐름. 배포 후 사이트 200과 새 API 라우트 확인.
+- **아직 못 확인한 것**: 실제 AWS Cost Explorer 호출(고객 Role 스택이 옛 템플릿이라 권한이 없을 수 있다), 실제 SES 발송, 보조 모델 전환(503이 날 때만 발동).
+- 사용자 몫(계정 설정이라 사용자 결정): ① 연결한 계정의 스택 `aws-gap-check-readonly-role`을 최신 `infra/customer-role.yaml`로 업데이트(비용 권한), Cost Explorer를 안 켠 계정이면 Billing 콘솔에서 켜기. ② 알림 메일: SES(서울)에서 보내는·받는 이메일 확인(샌드박스), 서버 `.env`에 `MAIL_FROM`·`SITE_URL` 추가, 스택에 `MailFrom` 파라미터(IAM 정책만 바뀜) 후 `docker compose up -d`. `MAIL_FROM`이 비어 있으면 알림 기능만 꺼진다. ③ 역할 배정(`docs/ROLES.md`), 제출 마감일 확인, 조원 계정 연결 여부 결정, 시연 후 EC2 중지·정리.
+- 외부 공유 전 주의: 스캔 결과·대시보드 캡처에 계정 ID·이메일·인스턴스 ID가 보인다. 가린 뒤에 공유한다(데모 모드 화면은 가짜 값이라 안전).
 
 ## 이전 상태 (서버리스 버전, 2026-10-28, 보관)
 서버리스 구현(PR #3)은 코드 완성까지 했고 실제 배포는 하지 않은 채 컨테이너 구성으로 전환했다. 관련 파일은 `legacy/serverless/`(README 참고)에 있다.
 
 ## 다음 단계 (권장 순서)
-1. 시연 직전에 스캔을 한 번 더 돌려 해설 캐시가 차 있는지 확인한다.
-2. 조원 계정 연결 시연(가능하면), 시연 영상, 장표(역할은 `docs/ROLES.md`).
-3. 사용하지 않는 동안 EC2를 중지해 비용을 줄인다(시연 전 시작 후 DuckDNS IP 갱신 확인).
-4. 발표(12/1) 후 `docs/demo-runbook.md`의 정리 절차로 스택, SSM 파라미터, IAM 사용자, DuckDNS, Gemini 키를 삭제한다.
+1. 비용·알림을 실제로 켠다(위 "사용자 몫" ①②). 켠 뒤 대시보드에서 비용 표시와 "테스트 메일 보내기"를 확인한다.
+2. 시연 직전에 스캔을 한 번 더 돌려 해설 캐시가 차 있는지 확인한다.
+3. 조원 계정 연결 시연(가능하면), 시연 영상, 장표(역할은 `docs/ROLES.md`, 시연 순서는 `docs/demo-runbook.md`).
+4. 사용하지 않는 동안 EC2를 중지해 비용을 줄인다(시연 전 시작 후 DuckDNS IP 갱신 확인). 자동 점검·알림은 서버가 켜져 있을 때만 돈다.
+5. 발표(12/1) 후 `docs/demo-runbook.md`의 정리 절차로 스택, SSM 파라미터, IAM 사용자, DuckDNS, Gemini 키, SES 이메일 ID를 삭제한다.

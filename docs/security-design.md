@@ -9,7 +9,7 @@
 | 고객 액세스 키 유출 | 액세스 키를 받지 않는다. 고객 계정의 읽기 전용 Role을 임시 자격 증명으로만 맡는다 | `infra/customer-role.yaml` | 설계상 키 입력 화면이 없음 |
 | Confused deputy: 다른 사용자가 남의 계정 ID를 등록해 스캔 | 연결마다 서버가 ExternalId를 발급하고 사용자는 바꿀 수 없다. 고객 Role은 그 값만 받는다 | `gapcheck/connections.py`, 템플릿 `sts:ExternalId` 조건 | `tests/test_core.py`의 confused deputy 테스트, 시연(사용자 2명) |
 | 서비스 계정 안의 다른 주체가 고객 Role을 맡음 | 신뢰 정책에 `aws:PrincipalArn`으로 인스턴스 Role만 허용 | `infra/customer-role.yaml` | 콘솔 관리자로 AssumeRole 시도 시 거부 |
-| 과도한 권한 | 고객 쪽은 읽기 전용 관리형 정책 + 비용 조회(ce:GetCost*) 인라인 정책. 서비스 쪽 인스턴스 Role은 AssumeRole(고객 Role 이름 고정)과 SSM 파라미터 2개 읽기만 | `infra/ec2.yaml` | `docs/architecture.md` IAM 표 |
+| 과도한 권한 | 고객 쪽은 읽기 전용 관리형 정책 + 비용 조회(ce:GetCost*) 인라인 정책. 서비스 쪽 인스턴스 Role은 AssumeRole(고객 Role 이름 고정), SSM 파라미터 2개 읽기, 확인된 보내는 주소 하나에 대한 `ses:SendEmail`만 | `infra/ec2.yaml` | `docs/architecture.md` IAM 표 |
 | 인스턴스 자격 증명 탈취(SSRF) | IMDSv2 필수, 앱은 사용자 입력 URL을 서버에서 요청하는 기능이 없다 | `infra/ec2.yaml`(`MetadataOptions`) | 템플릿 |
 | 비밀번호 대입·탈취 | scrypt 해시, 10자 이상, 5회 실패 시 15분 잠금, 실패 응답이 모두 같음 | `gapcheck/auth.py` | `tests/test_server.py` 로그인 테스트 |
 | 세션 탈취·CSRF | 세션 토큰은 SHA-256만 저장, 쿠키는 HttpOnly·Secure·SameSite=Strict, 상태 변경 요청은 `X-Requested-With` 헤더 요구 | `gapcheck/server.py`, `gapcheck/auth.py` | `test_csrf_header_required_for_writes` |
@@ -22,6 +22,9 @@
 | 컨테이너 탈출·권한 | app은 비루트 실행, `cap_drop: ALL`, `no-new-privileges`, `docker.sock` 미마운트, 공개 포트는 caddy(80, 443)뿐, 이미지·Prowler 버전 고정 | `compose.yaml`, `Dockerfile` | 파일 |
 | 비용 공격(스캔 남발) | 로그인 사용자만, 사용자당 동시 1개·하루 10회, Budgets 알림. 스캔을 지워도 기록은 `DELETED`로 남아 하루 한도에서 빠지지 않는다 | `gapcheck/scans.py` | `tests/test_core.py` 한도 테스트 |
 | 시크릿 유출 | Gemini 키·DuckDNS 토큰은 SSM SecureString. user data와 레포에는 값이 없고, DB 비밀번호는 부팅 때 랜덤 생성해 `.env`(권한 600)에만 둔다. Gemini 키는 헤더로만 보내고 오류 메시지·로그에서 가림 | `infra/ec2.yaml`, `gapcheck/llm.py` | `tests/test_llm.py` |
+| Cost Explorer 비용 남용(호출당 $0.01) | 로그인한 소유자의 ACTIVE 연결만 조회, 결과 6시간 캐시, 새로고침은 5분에 1회만 실제 호출, 오류 결과도 5분 캐시, 조회는 한 줄로 직렬화 | `gapcheck/billing.py` | `tests/test_billing.py`(캐시·새로고침 제한), `test_cost_endpoints`(남의 연결 404) |
+| 알림 메일 남용·정보 노출 | 받는 주소는 로그인 이메일 하나(요청 값으로 못 정함), 테스트 메일은 사용자당 1분 1회, 메일에는 계정 ID·점검 항목 제목·개수·링크만(리소스 이름·ARN 없음), 제목·본문의 줄바꿈 제거, SES 발송 권한은 보내는 주소 하나에만 | `gapcheck/notify.py`, `gapcheck/server.py`, `infra/ec2.yaml` | `tests/test_notify.py`, `test_test_mail_endpoint` |
+| 자동 점검으로 인한 부하·한도 우회 | 자동 스캔도 수동과 같은 경로(`scans.create`)라 사용자당 동시 1개·하루 한도 적용, 한 번에 하나씩 실행, 연결 소유자별로만 생성 | `gapcheck/scheduler.py`, `gapcheck/scans.py` | `tests/test_notify.py`(SchedulerTest) |
 | 결과 데이터 장기 보관 | 30일 후 DB 기록 자동 삭제, 즉시 삭제 버튼, 디스크는 EBS 암호화 | `gapcheck/worker.py`, `infra/ec2.yaml` | 삭제 테스트 |
 | 관리 접속 | SSH(22) 미개방, 관리는 Session Manager만 | `infra/ec2.yaml` | Security Group |
 
@@ -34,6 +37,8 @@
 - MySQL 연결은 TLS지만 인증서를 검증하지 않는다(같은 호스트의 Docker 네트워크 안).
 - 인증서가 DuckDNS·Let's Encrypt에 의존한다. 막히면 로컬 `docker compose`와 녹화 영상으로 대체한다.
 - Gemini API 무료 등급은 보낸 내용이 Google의 제품 개선에 쓰일 수 있다(약관 확인 필요). 보내는 것은 Prowler의 공개 점검 메타데이터와 개수·리전뿐이라 위험은 낮지만, 실제 서비스라면 유료 등급이나 AWS 안의 모델(Bedrock)을 쓴다.
+- 알림 메일은 평문이고 SES 샌드박스라 보내는·받는 주소를 모두 SES에서 확인해야 한다. 수신 주소는 로그인 이메일 하나이며 바꿀 수 없다. 메일 링크는 로그인해야 열린다.
+- 비용 조회 권한(`ce:GetCost*`)은 계정 전체 비용을 볼 수 있다. 읽기 전용이지만 고객이 동의해야 하는 범위라 템플릿에 명시했고, 이전에 연결한 계정은 스택을 업데이트하기 전에는 비용이 보이지 않는다.
 - 스캔 리전은 `ap-northeast-2` 하나로 고정했다(`scanner/run_scan.py`의 `SCAN_REGION`). 다른 리전의 리전 리소스는 점검하지 않는다.
 - 같은 사용자가 거의 동시에 스캔 시작을 두 번 누르면 한도 확인을 둘 다 통과할 수 있다. 작업자가 하나라서 실제 실행은 한 번에 하나다.
 - ExternalId는 비밀값이 아니다(AWS 안내). 보안은 "서버만 발급하고 사용자는 바꿀 수 없다"는 점에서 나온다.
