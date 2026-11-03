@@ -122,3 +122,34 @@ class FakeS3:
 
     def put_json(self, bucket, key, data):
         self.objects[(bucket, key)] = json.dumps(data).encode()
+
+
+class FakeCe:
+    """Cost Explorer. rows: (날짜 'YYYY-MM-DD', 서비스, 금액). pages가 2 이상이면 NextPageToken으로 나눠 준다."""
+
+    def __init__(self, rows=(), forecast="10.00", fail_code=None, forecast_fail=False, pages=1):
+        self.rows, self.forecast, self.fail_code = list(rows), forecast, fail_code
+        self.forecast_fail, self.pages = forecast_fail, pages
+        self.usage_calls, self.forecast_calls = [], []
+
+    def get_cost_and_usage(self, **kwargs):
+        self.usage_calls.append(kwargs)
+        if self.fail_code:
+            raise ClientError(self.fail_code)
+        days = sorted({day for day, _, _ in self.rows})
+        size = max(1, -(-len(days) // self.pages))
+        index = int(kwargs.get("NextPageToken", 0))
+        chunk = days[index * size:(index + 1) * size]
+        results = [{"TimePeriod": {"Start": day}, "Groups": [
+            {"Keys": [service], "Metrics": {"UnblendedCost": {"Amount": str(amount), "Unit": "USD"}}}
+            for d, service, amount in self.rows if d == day]} for day in chunk]
+        page = {"ResultsByTime": results}
+        if (index + 1) * size < len(days):
+            page["NextPageToken"] = str(index + 1)
+        return page
+
+    def get_cost_forecast(self, **kwargs):
+        self.forecast_calls.append(kwargs)
+        if self.forecast_fail:
+            raise ClientError("DataUnavailableException")
+        return {"Total": {"Amount": self.forecast, "Unit": "USD"}}

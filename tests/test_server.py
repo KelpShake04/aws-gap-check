@@ -11,10 +11,10 @@ from datetime import datetime, timedelta, timezone
 if not hasattr(hashlib, "scrypt"):
     raise unittest.SkipTest("hashlib.scrypt 없음(LibreSSL 빌드): 앱 이미지 안에서 실행하세요")
 
-from gapcheck import auth, explain, findings, server, worker  # noqa: E402
+from gapcheck import auth, billing, explain, findings, server, worker  # noqa: E402
 from tests import FIXTURES, ROOT  # noqa: E402
 from tests.dbutil import fresh_store  # noqa: E402
-from tests.fakes import FakeSts  # noqa: E402
+from tests.fakes import FakeCe, FakeSts  # noqa: E402
 
 ACCOUNT = "111122223333"
 NEW_PASSWORD = "correct horse battery"
@@ -60,6 +60,8 @@ class ServerTest(unittest.TestCase):
         self.store = fresh_store()
         self.clock = Clock()
         self.sts = FakeSts()
+        self.ce = FakeCe([("2026-10-28", "Amazon S3", 1.25)])
+        self.cost = billing.CostProvider(self.sts, lambda credentials: self.ce, now=self.clock)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         fixture = FIXTURES / "ocsf-sample.json"
@@ -68,7 +70,7 @@ class ServerTest(unittest.TestCase):
         deps = server.Deps(store=self.store, sts=self.sts, worker=self.worker,
                            service_account_id="999988887777", daily_limit=10,
                            frontend_dir=ROOT / "frontend", template_file=ROOT / "infra" / "customer-role.yaml",
-                           now=self.clock)
+                           now=self.clock, cost=self.cost)
         self.httpd = server.make_server(deps, "127.0.0.1", 0)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.server_close)
@@ -202,6 +204,25 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(alice.request("DELETE", f"/api/scans/{scan_id}")[0], 204)
         self.assertEqual(alice.request("GET", f"/api/scans/{scan_id}")[0], 404)
         self.assertFalse(self.worker.raw_path(alice_user["id"], scan_id).exists())
+
+    def test_cost_endpoints(self):
+        alice, _ = self.user()
+        conn = alice.request("POST", "/api/connections")[1]["connection"]
+        path = f"/api/connections/{conn['id']}/cost"
+        self.assertEqual(alice.request("GET", path)[0], 400)  # 검증 전 연결
+        self.sts.allowed[conn["externalId"]] = ACCOUNT
+        alice.request("POST", f"/api/connections/{conn['id']}/verify", {"accountId": ACCOUNT})
+
+        status, body = alice.request("GET", path)
+        self.assertEqual((status, body["cost"]["status"], body["cost"]["spent"]), (200, "OK", 1.25))
+        self.assertEqual(alice.request("POST", path + "/refresh", csrf=False)[0], 403)
+        self.assertEqual(alice.request("POST", path + "/refresh")[0], 200)
+        self.assertEqual(len(self.ce.usage_calls), 1)  # 5분 안의 새로고침은 다시 청구되지 않는다
+
+        bob, _ = self.user("bob@example.com")
+        self.assertEqual(bob.request("GET", path)[0], 404)
+        self.assertEqual(bob.request("POST", path + "/refresh")[0], 404)
+        self.assertEqual(Client(self.port).request("GET", path)[0], 401)
 
     def test_path_values_are_validated(self):
         client, _ = self.user()

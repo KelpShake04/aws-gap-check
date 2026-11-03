@@ -29,12 +29,30 @@ function h(tag, props = {}, ...children) {
   return el;
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// 차트용. SVG도 속성과 textContent로만 만든다(인라인 style은 CSP가 막으므로 쓰지 않는다).
+function svg(tag, props = {}, ...children) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(props)) el.setAttribute(key, String(value));
+  for (const child of children.flat()) el.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  return el;
+}
+
 function render(...nodes) {
   main.replaceChildren(...nodes.flat(Infinity).filter(Boolean));
 }
 
 function fmt(iso) {
   return iso ? new Date(iso).toLocaleString("ko-KR") : "-";
+}
+
+function money(amount, currency = "USD") {
+  try {
+    return amount.toLocaleString("en-US", { style: "currency", currency });
+  } catch {
+    return `${amount.toFixed(2)} ${currency}`;
+  }
 }
 
 function badge(value, labels = STATUS) {
@@ -73,7 +91,7 @@ function landing() {
   const result = h("p", { class: "small error-text" });
   render(h("section", { class: "card hero" },
     h("h1", {}, "AWS 계정 빈틈 점검"),
-    h("p", {}, "계정을 읽기 전용으로 연결하면 Prowler로 설정상 빈틈을 점검하고, AI가 무엇이 왜 위험한지와 고치는 순서를 한국어로 설명합니다."),
+    h("p", {}, "계정을 읽기 전용으로 연결하면 이번 달 비용을 보여 주고, Prowler로 설정상 빈틈을 점검하며, AI가 무엇이 왜 위험한지와 고치는 순서를 한국어로 설명합니다."),
     h("p", { class: "small muted" }, "액세스 키는 받지 않습니다. 연결은 고객 계정의 읽기 전용 Role과 ExternalId로만 합니다."),
     h("form", {
       class: "stack",
@@ -111,7 +129,7 @@ function passwordView() {
         }
         try {
           await auth.changePassword(api, current.value, next.value);
-          history.replaceState(null, "", "#/scans");
+          history.replaceState(null, "", "#/");
           await start();
         } catch (err) {
           result.textContent = err.message;
@@ -165,7 +183,7 @@ function showSetup(conn, setup) {
         const { connection } = await api.post(`/connections/${encodeURIComponent(conn.id)}/verify`,
           { accountId: input.value.trim() });
         if (connection.status === "ACTIVE") {
-          location.hash = "#/scans";
+          location.hash = "#/";
         } else {
           result.textContent = connection.message || "검증에 실패했습니다.";
           result.className = "small error-text";
@@ -189,13 +207,98 @@ function showSetup(conn, setup) {
           h("dt", {}, "ExternalId"), h("dd", {}, copyable(conn.externalId)))),
       h("li", {}, "스택이 완료되면 계정 ID를 입력하고 검증합니다.", form, result)),
     h("p", { class: "small muted" },
-      `만들어지는 Role(${setup.roleName})은 읽기 전용(SecurityAudit, ViewOnlyAccess)이며, 이 연결의 ExternalId를 아는 이 서비스만 맡을 수 있습니다. 연결을 끊으려면 그 계정에서 스택을 삭제하세요.`)));
+      `만들어지는 Role(${setup.roleName})은 읽기 전용(SecurityAudit, ViewOnlyAccess, 비용 조회 ce:GetCostAndUsage·ce:GetCostForecast)이며, 이 연결의 ExternalId를 아는 이 서비스만 맡을 수 있습니다. 연결을 끊으려면 그 계정에서 스택을 삭제하세요.`)));
 }
 
 async function deleteConnection(conn) {
   if (!confirm("이 연결 기록을 삭제할까요? (고객 계정의 Role은 그 계정에서 스택을 지워야 사라집니다)")) return;
   await api.del(`/connections/${encodeURIComponent(conn.id)}`);
   await connectionsView();
+}
+
+// ---------- 대시보드 ----------
+async function dashboardView() {
+  const [{ connections }, { scans }] = await Promise.all([api.get("/connections"), api.get("/scans")]);
+  const active = connections.filter((c) => c.status === "ACTIVE");
+  const waiting = connections.length - active.length;
+  render(
+    h("h1", {}, "대시보드"),
+    active.length ? null : h("section", { class: "card" },
+      h("p", {}, "연결된 계정이 없습니다. ", h("a", { href: "#/connections" }, "계정을 연결"),
+        "하면 비용과 보안 점검 결과를 여기서 한눈에 볼 수 있습니다.")),
+    waiting ? h("p", { class: "small muted" }, `검증이 끝나지 않은 연결 ${waiting}개 — `,
+      h("a", { href: "#/connections" }, "계정 연결에서 마무리"), "하세요.") : null,
+    active.map((conn) => accountCard(conn, scans.find((s) => s.connectionId === conn.id))));
+  if (scans.some((s) => !FINAL.includes(s.status))) pollTimer = setTimeout(route, 10000);
+}
+
+function accountCard(conn, scan) {
+  const costBox = h("div", {}, h("p", { class: "muted" }, "비용을 불러오는 중…"));
+  const refresh = h("button", { type: "button", class: "link", disabled: true, onclick: () => loadCost(true) }, "새로고침");
+  async function loadCost(force) {
+    refresh.disabled = true;
+    try {
+      const path = `/connections/${encodeURIComponent(conn.id)}/cost`;
+      const { cost } = force ? await api.post(`${path}/refresh`) : await api.get(path);
+      costBox.replaceChildren(costView(cost));
+    } catch (err) {
+      costBox.replaceChildren(h("p", { class: "error-text" }, err.message));
+    }
+    refresh.disabled = false;
+  }
+  loadCost(false);
+  return h("section", { class: "card account" },
+    h("header", { class: "account-head" },
+      h("h2", {}, "계정 ", h("code", {}, conn.accountId)), refresh),
+    costBox,
+    h("h3", { class: "block" }, "보안 점검"),
+    securityView(conn, scan));
+}
+
+function costView(cost) {
+  if (cost.status !== "OK") return h("p", { class: "error-text" }, cost.message);
+  const fmtMoney = (amount) => money(amount, cost.currency);
+  const peak = Math.max(...cost.daily.map((d) => d.amount), 0.01);
+  const total = cost.services.reduce((sum, item) => sum + item.amount, 0) || 1;
+  return h("div", {},
+    h("div", { class: "counts three" },
+      h("div", { class: "count" }, h("strong", {}, fmtMoney(cost.spent)), h("span", {}, `${cost.month} 사용액`)),
+      h("div", { class: "count" }, h("strong", {}, cost.forecast === null ? "-" : fmtMoney(cost.forecast)), h("span", {}, "월말 예상")),
+      h("div", { class: "count" }, h("strong", {}, fmtMoney(cost.previous)), h("span", {}, "지난달"))),
+    h("p", { class: "small muted" }, "최근 30일 일별 비용"),
+    svg("svg", { class: "daily", viewBox: "0 0 600 80", role: "img", "aria-label": "최근 30일 일별 비용" },
+      cost.daily.map((d, i) => {
+        const height = Math.round((d.amount / peak) * 70);
+        return svg("rect", { x: i * 20 + 2, y: 78 - height, width: 16, height,
+          class: i === cost.daily.length - 1 ? "bar today" : "bar" }, svg("title", {}, `${d.date} ${fmtMoney(d.amount)}`));
+      }),
+      svg("line", { x1: 0, x2: 600, y1: 78.5, y2: 78.5, class: "axis" })),
+    cost.services.length ? h("ul", { class: "services" }, cost.services.map((item) => h("li", {},
+      h("span", {}, item.name), h("span", { class: "amount" }, fmtMoney(item.amount)),
+      svg("svg", { viewBox: "0 0 100 4", preserveAspectRatio: "none", "aria-hidden": "true" },
+        svg("rect", { width: 100, height: 4, class: "track" }),
+        svg("rect", { width: ((item.amount / total) * 100).toFixed(1), height: 4, class: "fill" }))))) : null,
+    h("p", { class: "small muted" }, `크레딧 적용 전 사용액 · 조회 ${fmt(cost.fetchedAt)} · 비용 조회는 건당 $0.01이라 6시간마다 갱신합니다.`));
+}
+
+function securityView(conn, scan) {
+  const startButton = h("button", {
+    type: "button",
+    onclick: async () => {
+      startButton.disabled = true;
+      try {
+        const { scan: started } = await api.post("/scans", { connectionId: conn.id });
+        location.hash = `#/scans/${started.id}`;
+      } catch (err) {
+        startButton.disabled = false;
+        alert(err.message);
+      }
+    },
+  }, "스캔 시작");
+  if (!scan) return h("p", { class: "muted" }, "아직 스캔이 없습니다. ", startButton);
+  return h("div", {},
+    h("p", {}, badge(scan.status), " ", fmt(scan.createdAt), " ", h("a", { href: `#/scans/${scan.id}` }, "결과 보기"), " ", startButton),
+    scan.status === "DONE" ? countsView(scan.counts) : null);
 }
 
 // ---------- 스캔 목록 ----------
@@ -329,12 +432,13 @@ async function deleteScan(scan) {
 // ---------- 시작 ----------
 async function route() {
   clearTimeout(pollTimer);
-  const hash = location.hash || "#/scans";
+  const hash = location.hash || "#/";
   try {
     if (hash.startsWith("#/scans/")) await reportView(decodeURIComponent(hash.slice("#/scans/".length)));
+    else if (hash === "#/scans") await scansView();
     else if (hash === "#/connections") await connectionsView();
     else if (hash === "#/password") passwordView();
-    else await scansView();
+    else await dashboardView();
   } catch (err) {
     showError(err);
   }

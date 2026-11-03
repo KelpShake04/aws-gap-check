@@ -23,7 +23,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: AwsGapCheckReadOnlyRole
-      Description: aws-gap-check read-only security scan (SecurityAudit + ViewOnlyAccess)
+      Description: aws-gap-check read-only security scan and cost view (SecurityAudit + ViewOnlyAccess + Cost Explorer read)
       MaxSessionDuration: 3600
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -46,6 +46,17 @@ Resources:
       ManagedPolicyArns:
         - !Sub "arn:${AWS::Partition}:iam::aws:policy/SecurityAudit"
         - !Sub "arn:${AWS::Partition}:iam::aws:policy/job-function/ViewOnlyAccess"
+      Policies:
+        # 대시보드의 비용 화면용(읽기 전용). 호출 한 번에 $0.01이 청구돼 서비스가 결과를 6시간 재사용한다
+        - PolicyName: aws-gap-check-cost-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ce:GetCostAndUsage
+                  - ce:GetCostForecast
+                Resource: "*"
 
 Outputs:
   RoleArn:

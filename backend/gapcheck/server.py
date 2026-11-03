@@ -19,7 +19,7 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from . import auth, connections, scans
-from .common import ApiError, BadRequest, Forbidden, Unauthorized, utcnow
+from .common import ApiError, BadRequest, Forbidden, Unauthorized, Unavailable, utcnow
 from .views import TEMPLATE_PATH, conn_view, finding_view, scan_view, setup_info
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,7 @@ class Deps:
     template_file: pathlib.Path
     demo: bool = False
     now: Callable = utcnow
+    cost: Any = None  # get(sub, conn, force) -> 비용 요약 dict
 
 
 @dataclass
@@ -121,6 +122,24 @@ def delete_connection(call):
     return 204, None
 
 
+# ---------- 비용 ----------
+def get_cost(call):
+    return 200, {"cost": _cost(call, force=False)}
+
+
+def refresh_cost(call):
+    return 200, {"cost": _cost(call, force=True)}
+
+
+def _cost(call, force: bool) -> dict:
+    if call.deps.cost is None:
+        raise Unavailable("비용 조회를 쓸 수 없습니다.")
+    conn = connections.get(call.deps.store, call.user["id"], call.args[0])
+    if conn["status"] != "ACTIVE":
+        raise BadRequest("검증이 끝난 연결만 비용을 조회할 수 있습니다.")
+    return call.deps.cost.get(call.user["id"], conn, force)
+
+
 # ---------- 스캔 ----------
 def start_scan(call):
     scan, _ = scans.create(call.deps.store, call.user["id"], str(call.body().get("connectionId", "")),
@@ -158,6 +177,8 @@ ROUTES = [
     ("POST", r"/api/connections", create_connection, "user"),
     ("POST", r"/api/connections/([^/]+)/verify", verify_connection, "user"),
     ("DELETE", r"/api/connections/([^/]+)", delete_connection, "user"),
+    ("GET", r"/api/connections/([^/]+)/cost", get_cost, "user"),
+    ("POST", r"/api/connections/([^/]+)/cost/refresh", refresh_cost, "user"),
     ("GET", r"/api/scans", list_scans, "user"),
     ("POST", r"/api/scans", start_scan, "user"),
     ("GET", r"/api/scans/([^/]+)", get_scan, "user"),
