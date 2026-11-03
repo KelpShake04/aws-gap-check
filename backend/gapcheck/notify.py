@@ -29,20 +29,26 @@ class SesMailer:
                                 "Body": {"Text": {"Data": body, "Charset": "UTF-8"}}}})
 
 
-def new_urgent(store, sub: str, scan: dict) -> list:
-    """이 스캔의 치명·높음 항목 중 같은 연결의 직전 완료 스캔에는 없던 것. 직전 스캔이 없으면 전부."""
+def new_urgent(store, sub: str, scan: dict) -> tuple:
+    """(항목, 첫 점검 여부). 항목은 이 스캔의 치명·높음 중 같은 연결의 직전 완료 스캔에는 없던 것.
+    직전 스캔이 없으면 전부."""
     previous = next((s for s in store.list_scans(sub) if s["connectionId"] == scan["connectionId"]
                      and s["status"] == "DONE" and s["id"] < scan["id"]), None)
     old = {f["checkId"] for f in store.list_findings(sub, previous["id"]) if f["severity"] in URGENT} \
         if previous else set()
     return [f for f in store.list_findings(sub, scan["id"])
-            if f["severity"] in URGENT and f["checkId"] not in old]
+            if f["severity"] in URGENT and f["checkId"] not in old], previous is None
 
 
-def compose(account_id: str, scan_id: str, items: list, site_url: str) -> tuple:
+def compose(account_id: str, scan_id: str, items: list, site_url: str, first: bool = False) -> tuple:
     """(제목, 본문). 제목·본문에는 검증된 계정 ID와 점검 항목 제목만 쓴다."""
-    subject = f"[aws-gap-check] 계정 {account_id}에서 새 위험 항목 {len(items)}개"
-    lines = [f"계정 {account_id}를 점검했더니 지난 점검에 없던 치명·높음 항목이 있습니다.", ""]
+    if first:
+        subject = f"[aws-gap-check] 계정 {account_id}의 첫 점검에서 위험 항목 {len(items)}개"
+        lead = f"계정 {account_id}의 첫 점검에서 치명·높음 항목이 발견되었습니다."
+    else:
+        subject = f"[aws-gap-check] 계정 {account_id}에서 새 위험 항목 {len(items)}개"
+        lead = f"계정 {account_id}를 점검했더니 지난 점검에 없던 치명·높음 항목이 있습니다."
+    lines = [lead, ""]
     for item in items[:MAX_LISTED]:
         title = " ".join(str(item.get("title") or item["checkId"]).split())[:120]
         lines.append(f"- [{SEVERITY.get(item['severity'], item['severity'])}] {title} (리소스 {item['totalCount']}개)")
@@ -64,13 +70,13 @@ class Notifier:
         conn = self.store.get_connection(sub, scan["connectionId"])
         if not conn or conn.get("schedule", "off") == "off":
             return False
-        items = new_urgent(self.store, sub, scan)
+        items, first = new_urgent(self.store, sub, scan)
         if not items:
             return False
         user = self.store.get_user(sub)
         if not user:
             return False
-        self.mailer.send(user["email"], *compose(scan["accountId"], scan["id"], items, self.site_url))
+        self.mailer.send(user["email"], *compose(scan["accountId"], scan["id"], items, self.site_url, first))
         logger.info("alert mail sent for scan %s (%d items)", scan["id"], len(items))
         return True
 

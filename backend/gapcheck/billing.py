@@ -68,12 +68,15 @@ class CostProvider:
         self.make_ce = make_ce
         self.now = now
         self._cache = {}
-        # shortcut: 조회를 한 줄로 세운다(동시 요청이 같은 호출을 두 번 청구하지 않게). 사용자가 늘면 연결별 잠금으로 바꾼다
-        self._lock = threading.Lock()
+        # 같은 연결의 동시 요청만 한 줄로 세운다(같은 호출을 두 번 청구하지 않게). 다른 연결은 서로 기다리지 않는다
+        self._locks = {}
+        self._locks_lock = threading.Lock()
 
     def get(self, sub: str, conn: dict, force: bool = False) -> dict:
         key = (sub, conn["id"])
-        with self._lock:
+        with self._locks_lock:
+            lock = self._locks.setdefault(key, threading.Lock())
+        with lock:
             now = self.now()
             entry = self._cache.get(key)
             if entry:

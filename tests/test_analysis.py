@@ -118,7 +118,8 @@ class ExplainTest(unittest.TestCase):
         self.sleeps = []
 
     def explainer(self, generate, cache=None, remaining=10 ** 9, fallback=None):
-        return explain.Explainer(generate, cache, fallback_generate=fallback, model="m", max_rpm=60,
+        return explain.Explainer(generate, cache, fallback_generate=fallback, model="m",
+                                 fallback_model="fb", max_rpm=60,
                                  remaining_ms=lambda: remaining, clock=lambda: 0.0,
                                  sleep=self.sleeps.append)
 
@@ -158,6 +159,16 @@ class ExplainTest(unittest.TestCase):
         explainer = self.explainer(generate, fallback=fallback)
         self.assertEqual(explainer.explain(self.groups[0]), (GOOD, "gemini"))
         self.assertEqual(len(fallback.prompts), 1)
+
+    def test_fallback_answer_is_cached_under_fallback_model(self):
+        cache = FakeCache()
+        generate = Recorder(*[llm.TransientError("HTTP 503")] * explain.TRANSIENT_ATTEMPTS)
+        self.explainer(generate, cache, fallback=Recorder()).explain(self.groups[0])
+        check_id = self.groups[0]["checkId"]
+        self.assertEqual(list(cache.data), [(check_id, explain.PROMPT_VERSION, "fb")])
+        # 다음 스캔은 주 모델 캐시가 비어 있으니 주 모델로 다시 해설한다
+        self.assertEqual(self.explainer(Recorder(), cache).explain(self.groups[0]), (GOOD, "gemini"))
+        self.assertIn((check_id, explain.PROMPT_VERSION, "m"), cache.data)
 
     def test_fallback_model_failure_falls_back_to_prowler(self):
         generate = Recorder(*[llm.TransientError("HTTP 503")] * explain.TRANSIENT_ATTEMPTS)

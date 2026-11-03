@@ -1,6 +1,10 @@
-"""CodeBuild에서 Prowler 스캔을 한 번 실행하고 결과를 S3에 올린다.
+"""Prowler 실행 인자 구성(prowler_command)과, 레거시 CodeBuild용 실행·S3 업로드 진입점.
 
-입력은 StartBuild 환경 변수 override로 받는다(SCAN_ID, USER_SUB, ROLE_ARN,
+현재 컨테이너 구성에서는 앱 워커(backend/gapcheck/worker.py의 run_prowler)가 이 모듈의
+prowler_command()만 가져다 쓴다. 입력 검증 정규식은 backend/gapcheck/ids.py에도 같은 것이 있고
+tests/test_ids.py가 둘이 같은지 비교한다. 아래 main()과 S3 업로드는 legacy/serverless(CodeBuild) 호환용이다.
+
+CodeBuild 입력은 StartBuild 환경 변수 override로 받는다(SCAN_ID, USER_SUB, ROLE_ARN,
 EXTERNAL_ID; RESULTS_BUCKET은 프로젝트 설정). 모든 값을 정규식으로 검증하고,
 Prowler는 셸을 거치지 않고 인자 목록으로 실행하므로 값이 명령으로 해석될 수 없다.
 

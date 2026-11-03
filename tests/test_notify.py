@@ -60,7 +60,9 @@ class NotifyTest(Base):
         to, subject, body = self.mailer.sent[0]
         self.assertEqual(to, "alice@example.com")
         self.assertIn(ACCOUNT, subject)
-        self.assertIn("새 위험 항목 2개", subject)
+        self.assertIn("첫 점검에서 위험 항목 2개", subject)
+        self.assertIn("첫 점검에서", body)
+        self.assertNotIn("지난 점검", body)
         self.assertIn("[치명] 공개 버킷 (리소스 2개)", body)
         self.assertNotIn("medium", body)
         self.assertIn(f"https://agc.example.org/#/scans/{scan['id']}", body)
@@ -74,6 +76,7 @@ class NotifyTest(Base):
         self.assertTrue(self.notifier.scan_done(SUB, more))
         self.assertEqual(len(self.mailer.sent), 2)
         self.assertIn("새 위험 항목 1개", self.mailer.sent[1][1])
+        self.assertIn("지난 점검에 없던", self.mailer.sent[1][2])
 
     def test_severity_upgrade_counts_as_new(self):
         self.add_scan(T0, groups=[group("a", "medium")])
