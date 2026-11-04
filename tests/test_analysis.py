@@ -1,11 +1,14 @@
 """findings, validate, explain 테스트."""
 import copy
+import importlib.util
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from gapcheck import explain, findings, llm
 from gapcheck.validate import ValidationError, validate
-from tests import FIXTURES
+from tests import FIXTURES, ROOT
 
 # fixture에 들어 있는 고객 정보와 공격 문자열. 프롬프트에 하나도 들어가면 안 된다.
 CUSTOMER_STRINGS = ["123456789012", "demo-public-bucket", "launch-wizard-1", "web-sg", "intern-kim",
@@ -58,6 +61,26 @@ class FindingsTest(unittest.TestCase):
         base["remediation"]["references"] = ["javascript:alert(1)", "http://x", "https://ok"]
         groups, _ = findings.parse([base])
         self.assertEqual(groups[0]["references"], ["https://ok"])
+
+    def test_remediation_code_from_prowler_metadata(self):
+        with tempfile.TemporaryDirectory() as root:
+            check = Path(root, "providers", "aws", "services", "s3", "s3_demo")
+            check.mkdir(parents=True)
+            (check / "s3_demo.metadata.json").write_text(json.dumps({"Remediation": {"Code": {
+                "CLI": "aws s3api put-x --bucket <BUCKET_NAME>", "NativeIaC": "",
+                "Terraform": "```hcl\nresource \"x\" \"y\" {}\n```", "Other": 5}}}))
+            self.assertEqual(findings.remediation_code("s3_demo", root),
+                             {"CLI": "aws s3api put-x --bucket <BUCKET_NAME>", "Terraform": 'resource "x" "y" {}'})
+            self.assertEqual(findings.remediation_code("missing_check", root), {})
+            # check ID는 저장된 값이라 경로로 쓰기 전에 형식을 확인한다
+            self.assertEqual(findings.remediation_code("../s3/s3_demo", root), {})
+            self.assertEqual(findings.remediation_code(None, root), {})
+
+    @unittest.skipUnless(importlib.util.find_spec("prowler"), "Prowler가 설치된 앱 이미지 안에서만 확인")
+    def test_core_checks_have_official_code(self):
+        for check in json.loads((ROOT / "scanner" / "core-checks.json").read_text())["aws"]:
+            with self.subTest(check=check):
+                self.assertTrue(findings.remediation_code(check))
 
 
 class ValidateTest(unittest.TestCase):

@@ -4,8 +4,17 @@
 """
 from __future__ import annotations
 
+import glob
+import importlib.util
+import json
+import os
+import re
+from functools import lru_cache
+
 SEVERITIES = ("critical", "high", "medium", "low", "informational")
 MAX_RESOURCES = 100
+# Prowler 메타데이터 Remediation.Code의 종류. 화면에 이 순서로 보인다(Other는 콘솔 절차)
+CODE_KINDS = ("Other", "CLI", "NativeIaC", "Terraform")
 
 
 def parse(findings: list):
@@ -65,6 +74,40 @@ def parse(findings: list):
         group["regions"].sort()
     counts["failedChecks"] = len(ordered)
     return ordered, counts
+
+
+@lru_cache(maxsize=512)
+def remediation_code(check_id, root: str | None = None) -> dict:
+    """check의 공식 수정 예시(Prowler 원문)를 {종류: 코드}로 돌려준다. 없으면 {}.
+
+    OCSF 출력에는 코드가 없어서, 같은 이미지에 설치된 Prowler의 <check>.metadata.json을 읽는다.
+    """
+    if not isinstance(check_id, str) or not re.fullmatch(r"[a-z0-9_]{1,120}", check_id):
+        return {}
+    if root is None:
+        spec = importlib.util.find_spec("prowler")
+        if spec is None or not spec.origin:
+            return {}
+        root = os.path.dirname(spec.origin)
+    paths = glob.glob(os.path.join(glob.escape(root), "providers", "aws", "services", "*",
+                                   check_id, f"{check_id}.metadata.json"))
+    try:
+        with open(paths[0], encoding="utf-8") as f:
+            code = json.load(f)["Remediation"]["Code"]
+    except (IndexError, OSError, ValueError, KeyError, TypeError):
+        return {}
+    if not isinstance(code, dict):
+        return {}
+    return {kind: _unfence(code[kind])[:4000] for kind in CODE_KINDS
+            if isinstance(code.get(kind), str) and code[kind].strip()}
+
+
+def _unfence(text: str) -> str:
+    """```hcl ... ``` 처럼 감싼 값이면 펜스 줄을 뺀다."""
+    lines = text.strip().split("\n")
+    if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].strip() == "```":
+        lines = lines[1:-1]
+    return "\n".join(lines)
 
 
 def _text(value, limit: int) -> str:
