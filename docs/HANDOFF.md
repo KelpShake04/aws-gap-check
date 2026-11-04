@@ -1,4 +1,4 @@
-# 인수인계 (2026-11-03 기준)
+# 인수인계 (2026-11-04 기준)
 
 ## 한 줄 요약
 AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국어로 위험·영향·조치를 해설하고, 계정 비용을 보여 주며, 주기적으로 점검해 새 위험 항목을 이메일로 알리는 웹 서비스. 팀 5명(2조), 개발은 사용자 1명이 전담. 발표 12/1.
@@ -19,18 +19,21 @@ AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국�
 - 평가 기준(IaC 필수 여부, 시연 시간), 비용 상한, 조원 참여 여부.
 - 조원 계정 연결 동의와 계정 종류.
 
-## 현재 상태 (2026-11-03, 배포 완료)
+## 현재 상태 (2026-11-04, 배포 완료)
 - 배포 구조는 EC2 한 대 + Docker Compose(app, mysql, caddy). 설계는 `docs/superpowers/specs/2026-10-28-container-redesign.md`, 실행·구조·한계는 `docs/container.md`, ERD는 `docs/erd.md`, 구성·보안은 `docs/architecture.md`·`docs/security-design.md`.
-- **배포됨**: 스택 `aws-gap-check-ec2`(ap-northeast-2b, `c7i-flex.large`: Free Tier 계정이라 `t3.medium`이 거부됨), `https://agc-kelp04.duckdns.org`. SSM 파라미터 이름은 `/gapcheck/...`(`aws`·`ssm` 접두사는 예약어). 2026-11-03에 PR #24(이슈 #23 리뷰 반영)까지 main에 병합하고 EC2에 반영했다(`git pull` + `docker compose up -d --build`, 배포 전 진행 중인 스캔이 없는지 확인).
+- **배포됨**: 스택 `aws-gap-check-ec2`(ap-northeast-2b, `c7i-flex.large`: Free Tier 계정이라 `t3.medium`이 거부됨), `https://agc-kelp04.duckdns.org`. SSM 파라미터 이름은 `/gapcheck/...`(`aws`·`ssm` 접두사는 예약어). 2026-11-04에 PR #27까지 main에 병합하고 EC2에 반영했다(`git pull` + `docker compose up -d --build`). 배포 전에 상태가 `DONE`/`FAILED`가 아닌 스캔이 0개인지 확인한다(`QUEUED`·`RUNNING`뿐 아니라 `PROCESSING`·`EXPLAINING`도 진행 중이라 재시작하면 끊긴다).
+- **2026-11-04 반영(PR #26, #27)**
+  - Prowler 5.46.0 → 5.47.0(보안그룹 CIDR을 `0.0.0.0/1` 두 개처럼 쪼개 열면 못 잡던 문제 수정). core check 33개 모두 5.47.0에 있다.
+  - 리포트의 finding 카드마다 "공식 수정 예시 (Prowler 원문)": 콘솔 절차·AWS CLI·CloudFormation·Terraform. OCSF 결과에는 수정 코드가 없어서 이미지 안 Prowler의 `<check>.metadata.json`(`Remediation.Code`)을 check ID로 읽는다(`findings.remediation_code`). DB 변경 없음, 자동 적용 안 함. 운영 컨테이너에서 core 33개 모두 코드가 나오는 것 확인. Gemini가 자리표시자를 내 리소스 이름으로 채우는 기능은 아직 없다.
 - **2026-11-03 추가 기능(PR #20, 설계 `docs/superpowers/specs/2026-11-03-billing-dashboard.md`, `2026-11-03-scheduled-alerts.md`)**
   - 대시보드 홈(`#/`): 계정별 카드(이번 달 비용·월말 예상·지난달, 최근 30일 일별 차트, 서비스별 도넛, 최신 스캔 심각도, 자동 점검 설정) + 전체 요약. UI는 사이드바 레이아웃, 다크 모드 지원.
   - 비용 조회(Cost Explorer): 고객 Role의 `ce:GetCostAndUsage`/`ce:GetCostForecast`. 호출당 $0.01이라 6시간 캐시, 새로고침 5분 제한. 크레딧·환불 제외 금액.
   - 자동 점검(끔/매일/매주) + 이메일 알림: 직전 스캔에 없던 치명·높음 항목이 생기면 로그인 이메일로 SES 메일. 테스트 메일 버튼.
   - DB: `connections.schedule` 열 추가. **EC2 DB에는 2026-11-03에 `db/migrations/2026-11-03-schedule.sql` 내용을 SSM으로 적용 완료**(기존 연결 3개 유지). 새로 만드는 DB는 `db/init`에 이미 포함. 이후 스키마 변경은 `db/migrations/`에 SQL을 추가하고 root로 한 번 실행한다.
 - **AI 해설**: 주 모델 `gemini-3.1-flash-lite`(`.env`의 `GEMINI_MODEL`, 스택 파라미터 `GeminiModel`은 비어 있음). 5xx·타임아웃이면 10초, 20초 간격으로 3번 시도 후 보조 모델 `gemini-3.5-flash-lite`(`GEMINI_FALLBACK_MODEL`, compose 기본값)를 한 번 시도하고, 그래도 안 되면 Prowler 원문(영어)으로 대체한다. 해설 캐시(`explanations`)는 만료가 없다.
-- main에 있는 것: 앱 전체, `infra/ec2.yaml`, CI(unittest 170개 + MySQL 서비스, cfn-lint), 재시도·폴백(PR #16, #17), 이메일 비ASCII 거부(PR #18), 대시보드·비용·알림(PR #20), 리뷰 반영(PR #24: 보조 모델 해설은 보조 모델 이름으로 캐시, 첫 점검 알림 문구, 비용 조회 연결별 잠금, 테스트 메일 제한 잠금), 서버리스 코드는 `legacy/serverless/`.
+- main에 있는 것: 앱 전체, `infra/ec2.yaml`, CI(unittest 172개 + MySQL 서비스, cfn-lint), 재시도·폴백(PR #16, #17), 이메일 비ASCII 거부(PR #18), 대시보드·비용·알림(PR #20), 리뷰 반영(PR #24: 보조 모델 해설은 보조 모델 이름으로 캐시, 첫 점검 알림 문구, 비용 조회 연결별 잠금, 테스트 메일 제한 잠금), Prowler 5.47.0(PR #26), 공식 수정 예시(PR #27), 서버리스 코드는 `legacy/serverless/`.
 - 확인한 것: EC2에서 본인 계정 실제 스캔(14개 항목) + Gemini 해설, 캐시로 재스캔 70초대. 로컬 데모 모드에서 대시보드, 자동 점검 → 스캔 자동 생성 → 알림 메일(로그) 흐름(PR #24 뒤 "첫 점검" 문구까지). 배포 후 사이트 200과 새 API 라우트 확인.
-- **자동 점검 켬(2026-11-03)**: 운영에서 본인 계정 연결을 `daily`로 바꿨다. 마지막 스캔이 11-03 05:33 UTC라 첫 자동 스캔은 11-04 05:33 UTC(14:33 KST) 무렵이고, 직전 스캔에 없던 치명·높음 항목이 있을 때만 메일이 간다. 운영 DB에는 확인이 안 된 `PENDING` 연결 2개가 남아 있다(점검 대상 아님, 지우려면 대시보드에서 삭제).
+- **자동 점검 켬(2026-11-03)**: 운영에서 본인 계정 연결을 `daily`로 바꿨다. 마지막 스캔이 11-03 05:33 UTC라 첫 자동 스캔은 11-04 05:33 UTC(14:33 KST) 무렵이고, 직전 스캔에 없던 치명·높음 항목이 있을 때만 메일이 간다. **첫 자동 스캔은 2026-11-04 05:33:36 UTC에 생성돼 59초 만에 DONE**(Prowler 5.47.0, 실패 check 6개, 전날 수동 스캔은 12개). 새 치명·높음 항목이 없어 메일은 가지 않았다. 운영 DB에는 확인이 안 된 `PENDING` 연결 2개가 남아 있다(점검 대상 아님, 지우려면 대시보드에서 삭제).
 - **비용(2026-11-03 Cost Explorer, 크레딧 제외 사용액)**: 10월 $24.04, 11월 1~2일 $1.64이고 모두 크레딧으로 상쇄돼 실제 청구는 $0. 11월분의 대부분은 ELB $1.04·RDS $0.16(11-03에 지운 수업 실습 리소스)이다. 17개 리전에 남은 ELB·RDS·스냅샷·EIP·NAT·미연결 EBS·VPC 엔드포인트는 없다. 지금 계속 나가는 비용은 이 EC2의 EBS와 공인 IPv4로 하루 약 $0.22(월 약 $6.6, 컴퓨팅은 Free Tier로 0). Budgets의 월말 예측 $26.14는 ELB가 있던 날 기준이라 과대 추정이며 며칠 지나면 내려간다. 자동 점검을 쓰려면 EC2를 켜 두어야 한다.
 - **2026-11-03 비용·알림 켬**: 본인 계정 스택 `aws-gap-check-readonly-role`을 최신 템플릿으로 업데이트하고 `GetCostAndUsage` 호출 성공(아직 금액 0). SES(서울, 샌드박스)에 개발자 Gmail 주소를 이메일 ID로 확인, 스택 `aws-gap-check-ec2`에 `MailFrom` 파라미터를 넣어 앱 Role에 `ses:SendEmail` 추가, 서버 `.env`에 `MAIL_FROM`·`SITE_URL`을 넣고 `docker compose up -d`. 앱 컨테이너에서 테스트 메일 발송 성공(SES 전달 시도 1, 반송 0).
 - **운영 스택 주의**: 스택에 올린 템플릿은 `infra/ec2.yaml`에서 UserData의 `MAIL_FROM`·`SITE_URL` 두 줄만 뺀 것이다(값은 `.env`에 직접 넣었다). main 템플릿 그대로 업데이트하면 UserData가 바뀌어 인스턴스가 중지·재시작되거나 교체될 수 있으니, change set에서 `Instance`가 바뀌지 않는지 먼저 본다. 또 이 스택의 `GetTemplate` 결과는 한글이 `?`로 나온다. 그걸 고쳐서 올리면 UserData가 바뀌므로 repo 파일(`--template-body file://...`)로 올린다.

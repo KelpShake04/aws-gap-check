@@ -12,6 +12,7 @@
                             ├─ app: Python 표준 라이브러리 HTTP 서버 + 스캔 작업자 스레드
                             │    ├─ mysql:3306: 사용자, 세션, 연결, 스캔, 결과, 해설 캐시
                             │    ├─ Prowler 5.47.0 (같은 이미지, 셸 없이 인자 목록으로 실행)
+                            │    │    └─ check 메타데이터: 공식 수정 예시(콘솔·CLI·CloudFormation·Terraform)
                             │    │    └─ sts:AssumeRole + ExternalId ──> [고객 계정] AwsGapCheckReadOnlyRole
                             │    │                                        (SecurityAudit + ViewOnlyAccess)
                             │    │    └─ Cost Explorer(us-east-1): 비용 조회 (같은 Role, 6시간 캐시)
@@ -33,7 +34,7 @@ AWS 쪽에서 필요한 것은 EC2 한 대, 인스턴스 Role, Security Group(80
 | caddy | HTTPS | 인증서 발급·갱신 자동, 앱은 HTTP만 처리 |
 | 앱(Python 표준 라이브러리) | 로그인, API, 정적 파일, 스캔 작업자 | 의존성은 PyMySQL 하나(해시 고정) |
 | MySQL 8.4.9 | 데이터 저장 | 수업 RDS와 같은 버전, 평가 항목(DBMS·ERD)에 대응. ERD는 `docs/erd.md` |
-| Prowler 5.47.0 | 점검 실행 | 공식 이미지를 기반으로 앱 코드만 얹음 |
+| Prowler 5.47.0 | 점검 실행, 공식 수정 예시 | 공식 이미지를 기반으로 앱 코드만 얹음. OCSF 결과에는 수정 코드가 없어서 이미지 안 `<check>.metadata.json`의 `Remediation.Code`를 check ID로 읽어 화면에 붙인다(`findings.remediation_code`, 자동 적용 안 함) |
 | SSM Parameter Store | Gemini 키, DuckDNS 토큰 | SecureString 무료, 키를 코드·레포·user data에 두지 않음 |
 | Gemini API | 해설, 우선순위 | Bedrock 모델 접근 불가로 대체. 호출부(`llm.py`) 하나만 바꾸면 교체 가능 |
 | Cost Explorer | 계정별 이번 달 비용·예상·서비스별 비중 | 스캔과 같은 고객 Role로 조회. 호출당 $0.01이라 6시간 메모리 캐시, 새로고침 5분 제한(`billing.py`) |
