@@ -1,7 +1,7 @@
 """API 응답에 내보내는 필드의 화이트리스트. 저장된 항목을 그대로 내보내지 않는다."""
 from __future__ import annotations
 
-from . import ids
+from . import findings, ids
 
 TEMPLATE_PATH = "/customer-role.yaml"
 STACK_NAME = "aws-gap-check-readonly-role"
@@ -23,7 +23,9 @@ def scan_view(scan: dict) -> dict:
 
 
 def finding_view(group: dict) -> dict:
-    return {key: group.get(key) for key in FINDING_FIELDS}
+    view = {key: group.get(key) for key in FINDING_FIELDS}
+    view["remediationCode"] = findings.remediation_code(group.get("checkId"))
+    return view
 
 
 def setup_info(deps) -> dict:

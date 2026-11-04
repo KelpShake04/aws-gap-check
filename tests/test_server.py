@@ -202,6 +202,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(body["scan"]["counts"], counts)
         self.assertEqual([f["checkId"] for f in body["findings"]], [g["checkId"] for g in groups])
         self.assertEqual({f["explainSource"] for f in body["findings"]}, {"prowler"})
+        self.assertTrue(all(isinstance(f["remediationCode"], dict) for f in body["findings"]))
         self.assertTrue((self.worker.raw_path(alice_user["id"], scan_id) / worker.RESULT_NAME).is_file())
 
         bob, _ = self.user("bob@example.com")

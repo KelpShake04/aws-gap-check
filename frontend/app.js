@@ -523,7 +523,7 @@ async function reportView(id) {
     countsView(scan.counts),
     findings.length ? priorityView(scan.summary, findings) : null,
     findings.length ? h("h2", {}, `실패한 점검 항목 ${findings.length}개`) : null,
-    findings.map((f) => findingCard(f, opened.has(f.checkId))),
+    findings.map((f) => findingCard(f, opened.has(f.checkId), opened.has(`${f.checkId}#code`))),
     scan.status === "DONE" && !findings.length ? h("p", {}, "실패한 점검 항목이 없습니다.") : null,
     FINAL.includes(scan.status)
       ? h("button", { type: "button", class: "danger", onclick: () => deleteScan(scan) }, "결과 삭제")
@@ -553,7 +553,7 @@ function priorityView(summary, findings) {
     h("ol", {}, findings.slice(0, 3).map((f) => h("li", {}, badge(f.severity, SEVERITY), " ", titles[f.checkId]))));
 }
 
-function findingCard(f, isOpen) {
+function findingCard(f, isOpen, codeOpen) {
   const shown = f.resources.length;
   return h("article", { class: `card finding sev-${f.severity}` },
     h("header", {},
@@ -566,9 +566,24 @@ function findingCard(f, isOpen) {
       h("ul", { class: "resources" }, f.resources.map((r) => h("li", {},
         h("code", {}, r.name || r.uid), r.region ? ` ${r.region}` : "",
         r.uid && r.uid !== r.name ? h("div", { class: "small muted" }, r.uid) : null)))),
+    codeView(f, codeOpen),
     f.references && f.references.length
       ? h("p", { class: "small" }, "참고: ", f.references.map((url, i) => [i ? ", " : "", externalLink(url, "Prowler 설명")]))
       : null);
+}
+
+const CODE_LABEL = { Other: "콘솔에서", CLI: "AWS CLI", NativeIaC: "CloudFormation", Terraform: "Terraform" };
+
+// Prowler 메타데이터의 공식 예시. 서비스가 대신 실행하지 않으므로 사용자가 값을 바꿔 직접 실행한다
+function codeView(f, isOpen) {
+  const code = f.remediationCode || {};
+  const kinds = Object.keys(CODE_LABEL).filter((kind) => code[kind]);
+  if (!kinds.length) return null;
+  return h("details", { class: "remediation", "data-check": `${f.checkId}#code`, open: isOpen },
+    h("summary", {}, "공식 수정 예시 (Prowler 원문)"),
+    h("p", { class: "small muted" },
+      "<...>로 표시된 자리를 내 리소스 값으로 바꾸고, 내용을 확인한 뒤 직접 실행하세요. 이 서비스는 자동으로 고치지 않습니다."),
+    kinds.map((kind) => [h("h4", {}, CODE_LABEL[kind]), h("pre", {}, h("code", {}, code[kind]))]));
 }
 
 function explanationView(f) {
