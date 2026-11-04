@@ -46,7 +46,7 @@ AWS 쪽에서 필요한 것은 EC2 한 대, 인스턴스 Role, Security Group(80
 
 | 역할 | 할 수 있는 일 | 할 수 없는 일 |
 |---|---|---|
-| `aws-gap-check-app-role` (EC2 인스턴스 Role) | 고객 `AwsGapCheckReadOnlyRole` 맡기, 파라미터 2개 읽기, Session Manager 접속, (설정 시) 확인된 보내는 주소 하나로 `ses:SendEmail` | 그 밖의 모든 AWS API |
+| `aws-gap-check-app-role` (EC2 인스턴스 Role) | 고객 `AwsGapCheckReadOnlyRole` 맡기, 파라미터 2개 읽기, Session Manager 접속, (설정 시) 보내는 주소를 `ses:FromAddress` 조건으로 고정한 `ses:SendEmail`(SES 샌드박스는 받는 주소 ID도 확인해 Resource는 `identity/*`) | 그 밖의 모든 AWS API |
 | 고객 `AwsGapCheckReadOnlyRole` | 읽기 전용 점검·비용 조회(SecurityAudit, ViewOnlyAccess, ce:GetCostAndUsage·ce:GetCostForecast) | 모든 쓰기 |
 
 고객 Role 신뢰 정책은 ExternalId 일치와 `aws:PrincipalArn`(위 인스턴스 Role) 두 조건을 모두 요구한다. 인스턴스는 IMDSv2만 허용한다(hop limit 2: 컨테이너에서 쓰기 위해).

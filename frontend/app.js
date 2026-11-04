@@ -381,7 +381,7 @@ function costView(cost) {
       svg("text", { x: 0, y: 10, class: "tick" }, fmtMoney(peak)),
       svg("line", { x1: 0, x2: 600, y1: 16.5, y2: 16.5, class: "grid" }),
       cost.daily.map((d, i) => {
-        const height = Math.round((d.amount / peak) * 62);
+        const height = Math.max(0, Math.round((d.amount / peak) * 62));
         return svg("rect", { x: i * 20 + 2, y: 80 - height, width: 16, height, rx: 2,
           class: i === cost.daily.length - 1 ? "bar today" : "bar" }, svg("title", {}, `${d.date} ${fmtMoney(d.amount)}`));
       }),
@@ -460,6 +460,10 @@ function securityView(conn, scan) {
     },
   }, "스캔 시작");
   if (!scan) return h("div", { class: "scan-row" }, h("span", { class: "muted" }, "아직 스캔이 없습니다."), startButton);
+  if (!FINAL.includes(scan.status)) {
+    startButton.disabled = true;
+    startButton.textContent = "스캔 중…";
+  }
   return h("div", {},
     h("div", { class: "scan-row" },
       h("span", {}, badge(scan.status), " ", h("span", { class: "muted small" }, fmt(scan.createdAt))),

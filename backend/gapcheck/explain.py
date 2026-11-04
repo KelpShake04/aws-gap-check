@@ -133,6 +133,8 @@ class Explainer:
         self._last_call = None
         self.calls = 0
         self._failures = 0
+        # 주 모델이 장애로 보조 모델에 넘어간 뒤에는 이 스캔의 남은 항목에서 주 모델 재시도를 건너뛴다
+        self._prefer_fallback = False
 
     def explain(self, group: dict):
         """(explanation, source)를 돌려준다. source는 cache, gemini, prowler 중 하나."""
@@ -162,6 +164,8 @@ class Explainer:
     def _call(self, system: str, user: str, schema: dict):
         if self.generate is None or self._failures >= MAX_CONSECUTIVE_FAILURES:
             return None
+        if self._prefer_fallback:
+            return self._call_fallback(system, user, schema, None)
         for attempt in range(TRANSIENT_ATTEMPTS):
             if self.remaining_ms() < MIN_REMAINING_MS:
                 return None
@@ -199,7 +203,9 @@ class Explainer:
             try:
                 self.calls += 1
                 result = validate(self.fallback_generate(system, user, schema), schema)
-                logger.warning("primary model failed (%s); fallback model answered", primary_err)
+                if not self._prefer_fallback:
+                    logger.warning("primary model failed (%s); fallback model answers the rest of this scan", primary_err)
+                self._prefer_fallback = True
                 self._failures = 0
                 self._answered_by = self.fallback_model
                 return result

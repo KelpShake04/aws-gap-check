@@ -63,7 +63,7 @@ MySQL 스키마를 바꾸면 `docker compose down -v`로 볼륨을 지워야 새
 
 ## 실제 스캔 (로컬 PC, EC2 없이)
 
-2026-10-29 서비스 계정 자신을 고객 계정으로 연결해 확인했다(핵심 점검 50개, 약 75초).
+2026-10-29 서비스 계정 자신을 고객 계정으로 연결해 확인했다(당시 핵심 점검 50개, 약 75초. 지금은 33개로 약 60~75초).
 
 1. 관리자(콘솔 로그인 CLI 세션)로 `infra/local-app-role.yaml`을 스택 `aws-gap-check-local-app-role`로 배포한다.
 2. 앱 Role만 맡을 수 있는 IAM 사용자(예: `aws-gap-check-local`, 정책 `sts:AssumeRole` on `aws-gap-check-app-role`)와 액세스 키를 만들어 프로필(`agc-local`)에 저장한다. root는 AssumeRole을 못 해서 필요하다.
@@ -75,7 +75,7 @@ MySQL 스키마를 바꾸면 `docker compose down -v`로 볼륨을 지워야 새
 
 EC2에서는 `.env`에 `DEMO_FIXTURE`를 넣지 않는다. 그러면 앱이 인스턴스 Role(`aws-gap-check-app-role`)로 고객 계정의 `AwsGapCheckReadOnlyRole`을 `ExternalId`와 함께 맡아 Prowler를 실행한다. 고객 템플릿 `infra/customer-role.yaml`은 이 Role을 허용하도록 바꿔 두었다. AI 해설을 쓰려면 `.env`에 `GEMINI_MODEL=<모델 이름>`을 넣고 키를 SSM `/gapcheck/gemini-api-key`에 둔다. 주 모델이 503·타임아웃으로 3번(10초, 20초 간격) 실패하면 `GEMINI_FALLBACK_MODEL`(선택)의 보조 모델을 한 번 시도한다. 알림 메일(자동 점검 뒤 새 위험 항목)은 `.env`에 `MAIL_FROM=<SES에서 확인한 주소>`와 `SITE_URL=https://<도메인>`을 넣으면 켜진다. 설정과 샌드박스 주의는 `docs/superpowers/specs/2026-11-03-scheduled-alerts.md`. 
 
-배포 순서(템플릿은 `cfn-lint`와 user data 셸 문법만 확인했고, 실제 스택 생성은 아직 실행하지 않았다):
+배포 순서(2026-10-29 실제 스택으로 배포해 확인했다. 운영 스택은 UserData가 템플릿과 다르니 갱신할 때 `docs/HANDOFF.md`를 먼저 본다):
 
 1. [duckdns.org](https://www.duckdns.org)에서 서브도메인을 만든다. CloudShell에서 토큰과 Gemini 키를 SSM에 저장한다.
    ```bash
@@ -83,7 +83,7 @@ EC2에서는 `.env`에 `DEMO_FIXTURE`를 넣지 않는다. 그러면 앱이 인�
    ```
    Gemini 키도 같은 방식으로 `/gapcheck/gemini-api-key`에 저장한다.
 2. 로컬 실행용 스택 `aws-gap-check-local-app-role`이 있으면 먼저 지운다(Role 이름이 같다).
-3. CloudFormation 콘솔에서 `infra/ec2.yaml`로 스택을 만든다. 파라미터는 `DuckDnsSubdomain`, `GeminiModel`. 마지막 화면의 IAM 확인란을 체크한다.
+3. CloudFormation 콘솔에서 `infra/ec2.yaml`로 스택을 만든다. 파라미터는 `DuckDnsSubdomain`, `GeminiModel`, 필요하면 `MailFrom`(알림 메일), `InstanceType`, `AvailabilityZone`. 마지막 화면의 IAM 확인란을 체크한다.
 4. 5~10분 뒤 출력의 `SiteUrl`로 접속한다. EC2 콘솔 **Session Manager 연결** 후 `cd /opt/aws-gap-check && sudo docker compose exec app python -m gapcheck.cli create-user <이메일>`.
 5. 안 쓸 때는 인스턴스를 **중지**한다. 재시작하면 부팅 때 DuckDNS에 새 IP를 등록한다.
 
