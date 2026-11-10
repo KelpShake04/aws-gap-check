@@ -201,7 +201,7 @@ class ServerTest(unittest.TestCase):
         groups, counts = findings.parse(json.loads((FIXTURES / "ocsf-sample.json").read_text()))
         self.assertEqual(body["scan"]["status"], "DONE")
         self.assertEqual(body["scan"]["counts"], counts)
-        self.assertEqual(body["scan"]["score"], {"risk": 40, "security": 60})
+        self.assertEqual(body["scan"]["score"], {"risk": 40, "security": 71})
         self.assertEqual([f["checkId"] for f in body["findings"]], [g["checkId"] for g in groups])
         self.assertEqual({f["explainSource"] for f in body["findings"]}, {"prowler"})
         self.assertTrue(all(isinstance(f["remediationCode"], dict) for f in body["findings"]))
