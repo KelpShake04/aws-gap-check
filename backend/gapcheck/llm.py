@@ -123,7 +123,7 @@ def _send(request, api_key: str, timeout: float, opener) -> dict:
 
 def generate_chat(system: str, contents: list, tools: list, *, model: str, api_key: str,
                   allow_tools: bool = True, timeout: float = DEFAULT_TIMEOUT,
-                  max_output_tokens: int = 2048, opener=urllib.request.urlopen) -> dict:
+                  max_output_tokens: int = 8192, opener=urllib.request.urlopen) -> dict:
     """function calling 대화 한 걸음. 모델 응답 content({"role": "model", "parts": [...]})를 그대로 돌려준다.
 
     Gemini 3 계열은 functionCall part의 thoughtSignature를 다음 요청에 그대로 돌려줘야 하므로(없으면 400)

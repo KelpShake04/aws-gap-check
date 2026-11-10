@@ -779,6 +779,8 @@ function frequentPartsView(scanId, findings, activePart) {
 
 // AI 상담 대화. 리포트를 다시 그려도(자동 새로 고침) 같은 스캔의 대화는 유지한다
 const chatTurns = new Map();
+// 답을 기다리는 스캔. 5초 폴링으로 화면이 다시 그려져도 중복 전송하지 않게 모듈 수준에 둔다
+const chatBusy = new Set();
 const TOOL_LABEL = {
   list_findings: "실패 항목 목록", get_check_detail: "항목 상세", get_remediation_code: "공식 수정 예시",
   search_isms_p: "ISMS-P 검색", get_score_history: "점수 추이",
@@ -791,21 +793,27 @@ function chatView(scan) {
   const draw = () => log.replaceChildren(...turns.map((t) => h("div", { class: `chat-msg ${t.role}${t.error ? " error" : ""}` },
     t.tools && t.tools.length
       ? h("div", { class: "chat-tools small muted" }, "도구 사용: ",
-        t.tools.map((c, i) => [i ? " → " : "", h("code", {}, TOOL_LABEL[c.name] || c.name),
+        t.tools.map((c, i) => [i ? " → " : "", h("code", {}, Object.hasOwn(TOOL_LABEL, c.name) ? TOOL_LABEL[c.name] : c.name),
           c.args && c.args.check_id ? ` (${c.args.check_id})` : c.args && c.args.query ? ` ("${c.args.query}")` : ""]))
       : null,
     h("p", {}, t.text))));
   const input = h("input", { type: "text", maxlength: 500, required: true, "aria-label": "AI에게 질문",
     placeholder: "예: 가장 먼저 고칠 것은? SSH 열린 건 어떻게 막아? ISMS-P 몇 번 항목이야?" });
-  const button = h("button", { type: "submit" }, "질문");
+  const busy = chatBusy.has(scan.id);
+  const button = h("button", { type: "submit", disabled: busy }, busy ? "도구로 확인 중…" : "질문");
   const form = h("form", {
     class: "chat-form",
     onsubmit: async (event) => {
       event.preventDefault();
       const question = input.value.trim();
-      if (!question || button.disabled) return;
-      const history = turns.filter((t) => !t.error).slice(-6).map((t) => ({ role: t.role, text: t.text }));
-      turns.push({ role: "user", text: question });
+      if (!question || button.disabled || chatBusy.has(scan.id)) return;
+      // 서버 본문 한도(16KB) 안에 들도록 최근 4턴만, 턴마다 1000자로 자른다(한글 1자 = 3바이트)
+      const history = turns.filter((t) => !t.error && !t.failed).slice(-4)
+        .map((t) => ({ role: t.role, text: t.text.slice(0, 1000) }));
+      while (history.length && history[0].role !== "user") history.shift();
+      const asked = { role: "user", text: question };
+      turns.push(asked);
+      chatBusy.add(scan.id);
       input.value = "";
       button.disabled = true;
       button.textContent = "도구로 확인 중…";
@@ -814,9 +822,11 @@ function chatView(scan) {
         const result = await api.post(`/scans/${encodeURIComponent(scan.id)}/chat`, { question, history });
         turns.push({ role: "model", text: result.answer, tools: result.toolCalls });
       } catch (err) {
+        asked.failed = true;  // 답을 못 받은 질문은 다음 history에서 뺀다(user 턴 연속 방지)
         if (err.status === 401) return;
         turns.push({ role: "model", text: err.message || "답변을 받지 못했습니다.", error: true });
       } finally {
+        chatBusy.delete(scan.id);
         button.disabled = false;
         button.textContent = "질문";
         draw();
