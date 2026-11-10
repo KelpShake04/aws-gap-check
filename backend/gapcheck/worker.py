@@ -1,6 +1,7 @@
 """스캔 작업자: QUEUED 스캔을 오래된 순서로 하나씩 꺼내 Prowler를 실행하고 결과를 저장·해설한다.
 
-동시에 하나만 실행한다(인스턴스 한 대의 메모리를 지키려고). 원본 결과는 {raw_dir}/{user}/{scan}/에
+작업자 스레드 수는 SCAN_WORKERS(기본 1)로 정한다. 같은 스캔은 claim_scan이 한 스레드에만 준다.
+복구·정리·자동 점검은 첫 스레드만 한다(자동 점검 스캔이 중복으로 생기지 않게). 원본 결과는 {raw_dir}/{user}/{scan}/에
 두고 보존 기간(30일)이 지나면 DB 기록과 함께 지운다.
 """
 from __future__ import annotations
@@ -156,19 +157,20 @@ class Worker:
         fields["updatedAt"] = iso(self.now())
         self.store.update_scan(sub, scan_id, fields)
 
-    def loop(self) -> None:
+    def loop(self, housekeeping: bool = True) -> None:
         recovered, last_cleanup, last_schedule = False, None, None
         while True:
             try:
-                if not recovered:
-                    self.recover()
-                    recovered = True
-                if last_cleanup is None or time.monotonic() - last_cleanup > CLEANUP_INTERVAL:
-                    self.cleanup()
-                    last_cleanup = time.monotonic()
-                if last_schedule is None or time.monotonic() - last_schedule > SCHEDULE_INTERVAL:
-                    self.run_schedule()
-                    last_schedule = time.monotonic()
+                if housekeeping:
+                    if not recovered:
+                        self.recover()
+                        recovered = True
+                    if last_cleanup is None or time.monotonic() - last_cleanup > CLEANUP_INTERVAL:
+                        self.cleanup()
+                        last_cleanup = time.monotonic()
+                    if last_schedule is None or time.monotonic() - last_schedule > SCHEDULE_INTERVAL:
+                        self.run_schedule()
+                        last_schedule = time.monotonic()
                 if not self.run_once():
                     self.wake.wait(IDLE_WAIT)
                     self.wake.clear()
@@ -177,5 +179,7 @@ class Worker:
                 logger.exception("worker loop error")
                 time.sleep(5)
 
-    def start(self) -> None:
-        threading.Thread(target=self.loop, name="scan-worker", daemon=True).start()
+    def start(self, threads: int = 1) -> None:
+        for n in range(max(1, threads)):
+            threading.Thread(target=self.loop, kwargs={"housekeeping": n == 0},
+                             name=f"scan-worker-{n + 1}", daemon=True).start()

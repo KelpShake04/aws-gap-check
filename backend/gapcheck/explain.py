@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 
 from . import llm
@@ -108,6 +109,28 @@ def fallback_explanation(group: dict) -> dict:
     }
 
 
+class Pacer:
+    """Gemini 호출 간격(60/max_rpm초). 스캔 작업자 스레드끼리 하나를 공유해 합계 속도를 지킨다."""
+
+    def __init__(self, max_rpm: int, clock=time.monotonic, sleep=time.sleep):
+        self.interval = 60.0 / max(1, max_rpm)
+        self.clock = clock
+        self.sleep = sleep
+        self._last = None
+        self._lock = threading.Lock()
+
+    def wait(self) -> None:
+        # 잠금을 쥔 채 기다려서 다음 호출이 이 호출 뒤로 줄을 서게 한다
+        with self._lock:
+            now = self.clock()
+            if self._last is not None:
+                wait = self.interval - (now - self._last)
+                if wait > 0:
+                    self.sleep(wait)
+                    now += wait
+            self._last = now
+
+
 class Explainer:
     """generate(system, user, schema) -> dict 를 감싸 캐시, 호출 간격, 재시도, 시간 예산을 처리한다.
 
@@ -118,7 +141,7 @@ class Explainer:
     """
 
     def __init__(self, generate=None, cache=None, *, fallback_generate=None, model: str = "",
-                 fallback_model: str = "", max_rpm: int = 10,
+                 fallback_model: str = "", max_rpm: int = 10, pacer: Pacer = None,
                  remaining_ms=lambda: 10 ** 9, clock=time.monotonic, sleep=time.sleep):
         self.generate = generate
         self.fallback_generate = fallback_generate
@@ -128,9 +151,8 @@ class Explainer:
         self._answered_by = model
         self.interval = 60.0 / max(1, max_rpm)
         self.remaining_ms = remaining_ms
-        self.clock = clock
         self.sleep = sleep
-        self._last_call = None
+        self.pacer = pacer or Pacer(max_rpm, clock, sleep)
         self.calls = 0
         self._failures = 0
         # 주 모델이 장애로 보조 모델에 넘어간 뒤에는 이 스캔의 남은 항목에서 주 모델 재시도를 건너뛴다
@@ -169,7 +191,7 @@ class Explainer:
         for attempt in range(TRANSIENT_ATTEMPTS):
             if self.remaining_ms() < MIN_REMAINING_MS:
                 return None
-            self._pace()
+            self.pacer.wait()
             try:
                 self.calls += 1
                 result = validate(self.generate(system, user, schema), schema)
@@ -199,7 +221,7 @@ class Explainer:
 
     def _call_fallback(self, system: str, user: str, schema: dict, primary_err):
         if self.fallback_generate is not None and self.remaining_ms() >= MIN_REMAINING_MS:
-            self._pace()
+            self.pacer.wait()
             try:
                 self.calls += 1
                 result = validate(self.fallback_generate(system, user, schema), schema)
@@ -214,12 +236,3 @@ class Explainer:
         logger.warning("explanation fell back: %s", primary_err)
         self._failures += 1
         return None
-
-    def _pace(self):
-        now = self.clock()
-        if self._last_call is not None:
-            wait = self.interval - (now - self._last_call)
-            if wait > 0:
-                self.sleep(wait)
-                now += wait
-        self._last_call = now

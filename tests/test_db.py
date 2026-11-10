@@ -177,6 +177,13 @@ class WorkerStoreTest(Base):
 
 
 class PrivilegeTest(Base):
+    def test_queue_position_counts_older_queued_only(self):
+        first = self.queued_scan(ALICE)
+        second = self.queued_scan(BOB, now=NOW + timedelta(seconds=1))
+        self.assertEqual((self.store.queue_position(first["id"]), self.store.queue_position(second["id"])), (0, 1))
+        self.store.update_scan(ALICE, first["id"], {"status": "RUNNING"})  # 실행 중인 스캔은 대기열에서 빠진다
+        self.assertEqual(self.store.queue_position(second["id"]), 0)
+
     def test_app_account_cannot_change_schema(self):
         for sql in ("DROP TABLE explanations", "CREATE TABLE t (id INT)", "ALTER TABLE users ADD x INT",
                     "GRANT SELECT ON gapcheck.* TO 'gapcheck'@'%'"):
