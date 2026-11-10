@@ -167,6 +167,37 @@ svg.sevbar .sev-low { fill: var(--low); }
 svg.sevbar .sev-informational { fill: var(--info); }
 .sevlegend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.85rem; color: var(--muted); }
 .sevlegend strong { color: var(--fg); font-variant-numeric: tabular-nums; }
+.section-title { margin: 0; font-size: 1.05rem; }
+.trend-box { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.card > .page-head + div > .trend-box { margin-top: 8px; padding-top: 0; border-top: none; }
+.trend-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.trend-summary { display: grid; gap: 2px; }
+.trend-now { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-variant-numeric: tabular-nums; }
+.trend-now strong { font-size: 1.25rem; }
+.trend-toggle { display: inline-flex; gap: 4px; }
+.trend-toggle button.ghost { padding: 3px 9px; font-size: 0.78rem; }
+.trend-toggle button.ghost.active { background: var(--accent-soft); border-color: var(--accent); font-weight: 600; }
+svg.trend { width: 100%; height: auto; display: block; }
+svg.trend .axis { stroke: var(--line); }
+svg.trend .grid { stroke: var(--line); stroke-dasharray: 3 3; }
+svg.trend .tick { font-size: 11px; fill: var(--muted); }
+svg.trend .tick.mid { text-anchor: middle; }
+svg.trend .tick.end { text-anchor: end; }
+svg.trend .trend-line { fill: none; stroke: var(--accent); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+svg.trend.risk .trend-line { stroke: var(--high); }
+svg.trend.security .trend-line { stroke: var(--ok); }
+svg.trend .trend-area { fill: var(--accent); opacity: 0.1; }
+svg.trend.risk .trend-area { fill: var(--high); }
+svg.trend.security .trend-area { fill: var(--ok); }
+svg.trend .dot { fill: var(--card); stroke: var(--accent); stroke-width: 2.2; cursor: pointer; }
+svg.trend.risk .dot { stroke: var(--high); }
+svg.trend.security .dot { stroke: var(--ok); }
+svg.trend .dot.latest { fill: var(--accent); }
+svg.trend.risk .dot.latest { fill: var(--high); }
+svg.trend.security .dot.latest { fill: var(--ok); }
+svg.trend .dot:hover { r: 6px; }
+svg.trend .trend-val { font-size: 11px; font-weight: 600; fill: var(--fg); text-anchor: middle; }
+.trend-note { margin: 4px 0 0; }
 .schedule-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .skeleton { display: grid; gap: 10px; }
 .sk-row, .sk-chart { border-radius: 8px; background: linear-gradient(90deg, var(--soft) 25%, var(--card) 50%, var(--soft) 75%);

@@ -192,6 +192,7 @@ class ServerTest(unittest.TestCase):
 
         status, body = alice.request("POST", "/api/scans", {"connectionId": conn_id})
         self.assertEqual(status, 202)
+        self.assertIsNone(body["scan"]["score"])
         scan_id = body["scan"]["id"]
         self.assertTrue(self.worker.wake.is_set())
         self.assertTrue(self.worker.run_once())
@@ -200,6 +201,7 @@ class ServerTest(unittest.TestCase):
         groups, counts = findings.parse(json.loads((FIXTURES / "ocsf-sample.json").read_text()))
         self.assertEqual(body["scan"]["status"], "DONE")
         self.assertEqual(body["scan"]["counts"], counts)
+        self.assertEqual(body["scan"]["score"], {"risk": 40, "security": 60})
         self.assertEqual([f["checkId"] for f in body["findings"]], [g["checkId"] for g in groups])
         self.assertEqual({f["explainSource"] for f in body["findings"]}, {"prowler"})
         self.assertTrue(all(isinstance(f["remediationCode"], dict) for f in body["findings"]))

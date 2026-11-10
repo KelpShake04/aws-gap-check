@@ -17,9 +17,11 @@ def conn_view(conn: dict) -> dict:
 
 
 def scan_view(scan: dict) -> dict:
-    return {key: scan.get(key) for key in
+    view = {key: scan.get(key) for key in
             ("id", "connectionId", "accountId", "status", "counts", "summary", "error",
              "createdAt", "updatedAt")}
+    view["score"] = findings.scores(scan.get("counts"))
+    return view
 
 
 def finding_view(group: dict) -> dict:
