@@ -32,6 +32,15 @@
     "ec2_ebs_snapshots_encrypted",
     "rds_instance_storage_encrypted",
     "kms_cmk_rotation_enabled",
-    "cloudtrail_multi_region_enabled"
+    "cloudtrail_multi_region_enabled",
+    "s3_bucket_object_versioning",
+    "cloudwatch_log_metric_filter_root_usage",
+    "inspector2_is_enabled",
+    "guardduty_ec2_malware_protection_enabled",
+    "iam_support_role_created",
+    "ssm_managed_compliant_patching",
+    "rds_instance_deletion_protection",
+    "ec2_instance_port_elasticsearch_kibana_exposed_to_internet",
+    "rds_instance_copy_tags_to_snapshots"
   ]
 }
