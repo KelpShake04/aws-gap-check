@@ -19,6 +19,12 @@ AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국�
 - 평가 기준(IaC 필수 여부, 시연 시간), 비용 상한, 조원 참여 여부.
 - 조원 계정 연결 동의와 계정 종류.
 
+## 2026-11-10 변경 (요약)
+- 팀원 4명 앱 계정 사용 시작. 조원 이슈(#31·#33·#34) → PR #32·#35(점수 추이, 심각도 필터, 취약 파트) 병합·배포(`bf745cf`).
+- PR #30(SES `identity/*` + `ses:FromAddress` 조건, 보조 모델 유지) 병합. **운영 스택 `aws-gap-check-ec2` 반영 완료**: `LatestUbuntuAmiId`(SSM 타입)를 그대로 두면 새 AMI로 해석돼 Instance가 교체되므로, 현재 AMI에 고정된 Canonical 경로 `/aws/service/canonical/ubuntu/server/24.04/stable/20261023/amd64/hvm/ebs-gp3/ami-id`를 파라미터로 넣어 change set에서 `AppRole`만 바뀌는 것을 확인하고 실행했다. 이후 스택 업데이트도 이 값을 유지할 것. 팀원에게 메일을 보내려면 SES 샌드박스라 받는 주소도 SES에서 확인해야 한다.
+- **main 병합(2026-11-10)**: PR #37 CD(GitHub OIDC → 고정 SSM 문서 `agc-deploy`), #36 ISMS-P 통제 항목 관점, #40 AI 보안 상담 Agent(#38이 base 브랜치 삭제로 자동으로 닫혀 다시 올림), #39 시연 런북 갱신. 운영 반영은 Actions `deploy` 승인 후. 쌓인 PR은 base 브랜치를 지우면 retarget되지 않고 닫히므로, 먼저 base를 main으로 바꾸고 병합한다.
+- CD 준비 완료: 스택 `aws-gap-check-github-deploy` 생성, repo 변수 `AWS_DEPLOY_ROLE_ARN`·`DEPLOY_INSTANCE_ID` 등록, environment `production`에 required reviewer(관리자) 설정 — write 권한 팀원의 main push가 승인 없이 서버(root)에 배포되지 않게. SSM 문서 이름은 `aws`로 시작하면 예약어로 거부된다.
+
 ## 현재 상태 (2026-11-04, 배포 완료)
 - 배포 구조는 EC2 한 대 + Docker Compose(app, mysql, caddy). 설계는 `docs/superpowers/specs/2026-10-28-container-redesign.md`, 실행·구조·한계는 `docs/container.md`, ERD는 `docs/erd.md`, 구성·보안은 `docs/architecture.md`·`docs/security-design.md`.
 - **배포됨**: 스택 `aws-gap-check-ec2`(ap-northeast-2b, `c7i-flex.large`: Free Tier 계정이라 `t3.medium`이 거부됨), `https://agc-kelp04.duckdns.org`. SSM 파라미터 이름은 `/gapcheck/...`(`aws`·`ssm` 접두사는 예약어). 2026-11-04에 PR #27까지 main에 병합하고 EC2에 반영했다(`git pull` + `docker compose up -d --build`). 배포 전에 상태가 `DONE`/`FAILED`가 아닌 스캔이 0개인지 확인한다(`QUEUED`·`RUNNING`뿐 아니라 `PROCESSING`·`EXPLAINING`도 진행 중이라 재시작하면 끊긴다).
