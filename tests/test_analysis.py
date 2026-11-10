@@ -44,9 +44,9 @@ class FindingsTest(unittest.TestCase):
         self.assertEqual(self.counts["failedChecks"], 5)
 
     def test_scores(self):
-        self.assertEqual(findings.scores(self.counts), {"risk": 40, "security": 60})
+        self.assertEqual(findings.scores(self.counts), {"risk": 40, "security": 71})
         self.assertEqual(findings.scores({"failedChecks": 0, "passed": 10}), {"risk": 0, "security": 100})
-        self.assertEqual(findings.scores({"critical": 12, "failedChecks": 12}), {"risk": 120, "security": 0})
+        self.assertEqual(findings.scores({"critical": 12, "failedChecks": 12}), {"risk": 120, "security": 45})
         self.assertIsNone(findings.scores({}))
         self.assertIsNone(findings.scores(None))
 

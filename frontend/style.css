@@ -84,11 +84,31 @@ dd { margin: 0; }
 
 /* 스캔 결과 */
 .counts { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin: 16px 0; }
-.count { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; }
+.count { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center;
+  color: var(--fg); text-decoration: none; display: block; }
+a.count:hover { border-color: var(--accent); }
+a.count.active { border-color: var(--accent); background: var(--accent-soft); }
 .count strong { display: block; font-size: 1.4rem; }
 .count.sev-critical strong { color: var(--critical); }
 .count.sev-high strong { color: var(--high); }
 .count.sev-medium strong { color: var(--medium); }
+.scan-links .sev-link { font-weight: 600; text-decoration: underline; }
+.scan-links .sev-link.critical { color: var(--critical); }
+.scan-links .sev-link.high { color: var(--high); }
+.filter-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 10px; padding: 8px 14px; margin: 8px 0 12px; }
+.parts-card h2 { margin-top: 0; }
+.parts-list { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 8px; }
+.part-row { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  color: var(--fg); text-decoration: none; background: var(--card); }
+.part-row:hover { border-color: var(--accent); }
+.part-row.active { border-color: var(--accent); background: var(--accent-soft); }
+.part-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.part-name { display: inline-flex; align-items: center; gap: 6px; }
+svg.part-bar { width: 100%; height: 6px; display: block; border-radius: 3px; overflow: hidden; }
+svg.part-bar .track { fill: var(--soft); }
+svg.part-bar .fill { fill: var(--accent); }
+svg.part-bar .fill.urgent { fill: var(--high); }
 .finding { border-left: 5px solid var(--info); }
 .finding.sev-critical { border-left-color: var(--critical); }
 .finding.sev-high { border-left-color: var(--high); }
@@ -166,6 +186,8 @@ svg.sevbar .sev-medium { fill: var(--medium); }
 svg.sevbar .sev-low { fill: var(--low); }
 svg.sevbar .sev-informational { fill: var(--info); }
 .sevlegend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.85rem; color: var(--muted); }
+.sevlegend a { color: var(--muted); text-decoration: none; }
+.sevlegend a:hover { color: var(--accent); text-decoration: underline; }
 .sevlegend strong { color: var(--fg); font-variant-numeric: tabular-nums; }
 .section-title { margin: 0; font-size: 1.05rem; }
 .trend-box { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }

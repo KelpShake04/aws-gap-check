@@ -19,7 +19,10 @@ CODE_KINDS = ("Other", "CLI", "NativeIaC", "Terraform")
 
 
 def scores(counts) -> dict | None:
-    """스캔 counts에서 문제점 가중 점수(risk, 낮을수록 안전)와 보안 점수(security, 100점 만점)를 계산한다."""
+    """스캔 counts에서 문제점 가중 점수(risk, 낮을수록 안전)와 보안 점수(security, 100점 만점)를 계산한다.
+
+    리소스가 많은 계정에서 risk가 100을 넘더라도 보안 점수가 0에 고정되지 않도록 완만한 감쇠식(100 / (1 + risk/100))을 쓴다.
+    """
     if not isinstance(counts, dict) or not isinstance(counts.get("failedChecks"), int):
         return None
     risk = 0
@@ -27,7 +30,7 @@ def scores(counts) -> dict | None:
         val = counts.get(sev, 0)
         if isinstance(val, int) and not isinstance(val, bool) and val > 0:
             risk += val * weight
-    return {"risk": risk, "security": max(0, 100 - risk)}
+    return {"risk": risk, "security": round(100 * 100 / (100 + risk))}
 
 
 def parse(findings: list):

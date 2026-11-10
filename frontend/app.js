@@ -4,7 +4,15 @@ import * as auth from "./auth.js";
 import { createApi } from "./api.js";
 
 const SEVERITY = { critical: "치명", high: "높음", medium: "중간", low: "낮음", informational: "정보" };
-const WEIGHTS = { critical: 10, high: 5, medium: 2, low: 1, informational: 0 };
+const PARTS = [
+  ["ec2_securitygroup_", "sg", "보안 그룹 (네트워크 노출)"],
+  ["ec2_ebs_", "ebs", "EBS 스토리지·스냅샷 암호화"],
+  ["s3_", "s3", "S3 버킷 공개·암호화"],
+  ["iam_", "iam", "IAM 계정·권한·MFA"],
+  ["rds_", "rds", "RDS 데이터베이스 보안"],
+  ["kms_", "kms", "KMS 키 관리"],
+  ["cloudtrail_", "cloudtrail", "CloudTrail 감사 로그"],
+];
 const STATUS = {
   PENDING: "검증 전", ACTIVE: "연결됨", FAILED: "실패",
   QUEUED: "대기 중", RUNNING: "스캔 중", PROCESSING: "결과 처리 중", EXPLAINING: "AI 해설 중", DONE: "완료",
@@ -35,8 +43,15 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 // 차트용. SVG도 속성과 textContent로만 만든다(인라인 style은 CSP가 막으므로 쓰지 않는다).
 function svg(tag, props = {}, ...children) {
   const el = document.createElementNS(SVG_NS, tag);
-  for (const [key, value] of Object.entries(props)) el.setAttribute(key, String(value));
-  for (const child of children.flat()) el.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  for (const [key, value] of Object.entries(props)) {
+    if (value === undefined || value === null || value === false) continue;
+    if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
+    else el.setAttribute(key, String(value));
+  }
+  for (const child of children.flat(Infinity)) {
+    if (child === undefined || child === null || child === false) continue;
+    el.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
   return el;
 }
 
@@ -420,7 +435,7 @@ function breakdownView(services, total, fmtMoney) {
 }
 
 // 심각도 분포를 한 줄 누적 막대와 숫자 범례로 보여 준다
-function severityBar(counts) {
+function severityBar(counts, scanId) {
   const keys = Object.keys(SEVERITY);
   const total = keys.reduce((sum, key) => sum + (counts[key] || 0), 0);
   let x = 0;
@@ -435,7 +450,9 @@ function severityBar(counts) {
   return h("div", {},
     svg("svg", { class: "sevbar", viewBox: "0 0 100 10", preserveAspectRatio: "none", role: "img", "aria-label": "심각도 분포" }, rects),
     h("div", { class: "sevlegend" },
-      keys.map((key) => h("span", {}, `${SEVERITY[key]} `, h("strong", {}, counts[key] || 0))),
+      keys.map((key) => scanId
+        ? h("a", { href: `#/scans/${encodeURIComponent(scanId)}?severity=${key}` }, `${SEVERITY[key]} `, h("strong", {}, counts[key] || 0))
+        : h("span", {}, `${SEVERITY[key]} `, h("strong", {}, counts[key] || 0))),
       h("span", {}, "통과 ", h("strong", {}, counts.passed || 0))));
 }
 
@@ -449,12 +466,17 @@ function ago(iso) {
 }
 
 function scanScore(scan) {
-  if (!scan) return null;
-  if (scan.score && typeof scan.score.risk === "number" && typeof scan.score.security === "number") return scan.score;
-  const counts = scan.counts;
-  if (!counts || counts.failedChecks === undefined) return null;
-  const risk = Object.entries(WEIGHTS).reduce((sum, [sev, w]) => sum + Math.max(0, counts[sev] || 0) * w, 0);
-  return { risk, security: Math.max(0, 100 - risk) };
+  return scan && scan.score && typeof scan.score.risk === "number" && typeof scan.score.security === "number"
+    ? scan.score : null;
+}
+
+function partOf(finding) {
+  const checkId = String((finding && finding.checkId) || "");
+  for (const [prefix, key, label] of PARTS) {
+    if (checkId.startsWith(prefix)) return { key, label };
+  }
+  const svc = String((finding && finding.service) || "other").toLowerCase();
+  return { key: svc, label: `${svc.toUpperCase()} 설정` };
 }
 
 function shortDate(iso) {
@@ -573,7 +595,7 @@ function securityView(conn, accountScans) {
     h("div", { class: "scan-row" },
       h("span", {}, badge(scan.status), " ", h("span", { class: "muted small" }, fmt(scan.createdAt))),
       h("span", { class: "scan-actions" }, h("a", { href: `#/scans/${scan.id}` }, "결과 보기"), startButton)),
-    scan.status === "DONE" ? severityBar(scan.counts) : null,
+    scan.status === "DONE" ? severityBar(scan.counts, scan.id) : null,
     scoreTrendView(accountScans));
 }
 
@@ -628,12 +650,18 @@ async function scansView() {
     : h("p", {}, "먼저 ", h("a", { href: "#/connections" }, "계정을 연결"), "하세요.");
   const rows = scans.map((scan) => {
     const sc = scanScore(scan);
+    const sid = encodeURIComponent(scan.id);
     return h("tr", {},
-      h("td", {}, h("a", { href: `#/scans/${scan.id}` }, fmt(scan.createdAt))),
+      h("td", {}, h("a", { href: `#/scans/${sid}` }, fmt(scan.createdAt))),
       h("td", {}, scan.accountId || "-"),
       h("td", {}, badge(scan.status)),
-      h("td", {}, sc
-        ? `문제점 ${sc.risk}점 (보안 ${sc.security}점) · 치명 ${scan.counts.critical} · 높음 ${scan.counts.high} · 실패 항목 ${scan.counts.failedChecks}`
+      h("td", { class: "scan-links" }, sc
+        ? [
+          h("span", {}, `문제점 ${sc.risk}점 (보안 ${sc.security}점)`), " · ",
+          h("a", { class: "sev-link critical", href: `#/scans/${sid}?severity=critical` }, `치명 ${scan.counts.critical}`), " · ",
+          h("a", { class: "sev-link high", href: `#/scans/${sid}?severity=high` }, `높음 ${scan.counts.high}`), " · ",
+          h("a", { class: "sev-link", href: `#/scans/${sid}` }, `실패 항목 ${scan.counts.failedChecks}`),
+        ]
         : "-"));
   });
   render(
@@ -650,22 +678,37 @@ async function scansView() {
 }
 
 // ---------- 리포트 ----------
-async function reportView(id) {
+async function reportView(id, filterSeverity = "", filterPart = "") {
   const { scan, findings } = await api.get(`/scans/${encodeURIComponent(id)}`);
   const running = !FINAL.includes(scan.status);
   // 자동 새로 고침 때 사용자가 펼쳐 둔 리소스 목록을 유지한다(같은 스캔일 때만)
   const opened = main.dataset.report === id
     ? new Set([...main.querySelectorAll("details[open]")].map((d) => d.dataset.check)) : new Set();
+  const filtered = findings.filter((f) =>
+    (!filterSeverity || f.severity === filterSeverity) &&
+    (!filterPart || partOf(f).key === filterPart));
+  const activePartLabel = filterPart ? (PARTS.find(([, k]) => k === filterPart)?.[2] || filterPart.toUpperCase()) : "";
+  const filterNotice = (filterSeverity || filterPart)
+    ? h("div", { class: "filter-bar" },
+      h("span", {},
+        "필터 적용: ",
+        h("strong", {}, [filterSeverity ? SEVERITY[filterSeverity] || filterSeverity : "", activePartLabel].filter(Boolean).join(" · ")),
+        ` (${filtered.length}개 항목)`),
+      h("a", { href: `#/scans/${encodeURIComponent(scan.id)}` }, "전체 항목 보기"))
+    : null;
   render(
     h("p", {}, h("a", { href: "#/scans" }, "← 스캔 목록")),
     h("h1", {}, "스캔 결과 ", h("span", { class: "muted" }, scan.accountId || "")),
     h("p", {}, badge(scan.status), " ", fmt(scan.createdAt),
       scan.error ? h("span", { class: "error-text" }, " ", scan.error) : null),
     running ? h("p", { class: "muted" }, "진행 중입니다. 화면이 자동으로 새로 고쳐집니다.") : null,
-    countsView(scan.counts),
+    countsView(scan.id, scan.counts, filterSeverity),
+    findings.length ? frequentPartsView(scan.id, findings, filterPart) : null,
     findings.length ? priorityView(scan.summary, findings) : null,
-    findings.length ? h("h2", {}, `실패한 점검 항목 ${findings.length}개`) : null,
-    findings.map((f) => findingCard(f, opened.has(f.checkId), opened.has(`${f.checkId}#code`))),
+    findings.length ? h("h2", {}, filterNotice ? `선택한 점검 항목 ${filtered.length}개 (전체 ${findings.length}개)` : `실패한 점검 항목 ${findings.length}개`) : null,
+    filterNotice,
+    filtered.map((f) => findingCard(f, opened.has(f.checkId), opened.has(`${f.checkId}#code`))),
+    findings.length && !filtered.length ? h("p", { class: "muted" }, "선택한 조건에 해당하는 실패 항목이 없습니다.") : null,
     scan.status === "DONE" && !findings.length ? h("p", {}, "실패한 점검 항목이 없습니다.") : null,
     FINAL.includes(scan.status)
       ? h("button", { type: "button", class: "danger", onclick: () => deleteScan(scan) }, "결과 삭제")
@@ -674,12 +717,59 @@ async function reportView(id) {
   if (running || findings.some((f) => f.explainSource === "pending")) pollTimer = setTimeout(route, 5000);
 }
 
-function countsView(counts) {
+function countsView(scanId, counts, activeSeverity) {
   if (!counts || counts.failedChecks === undefined) return null;
+  const sid = encodeURIComponent(scanId);
   return h("div", { class: "counts" },
-    Object.keys(SEVERITY).map((sev) => h("div", { class: `count sev-${sev}` },
-      h("strong", {}, counts[sev] || 0), h("span", {}, SEVERITY[sev]))),
-    h("div", { class: "count" }, h("strong", {}, counts.passed || 0), h("span", {}, "통과")));
+    Object.keys(SEVERITY).map((sev) => {
+      const selected = activeSeverity === sev;
+      const href = selected ? `#/scans/${sid}` : `#/scans/${sid}?severity=${sev}`;
+      return h("a", { href, class: `count sev-${sev}${selected ? " active" : ""}` },
+        h("strong", {}, counts[sev] || 0), h("span", {}, SEVERITY[sev]));
+    }),
+    h("a", { href: `#/scans/${sid}`, class: `count${!activeSeverity ? " active" : ""}` },
+      h("strong", {}, counts.passed || 0), h("span", {}, "통과 (전체 보기)")));
+}
+
+// 실패한 점검 항목을 보안 영역(발생 파트)별로 집계해 사용자가 가장 자주 실수하는 파트를 보여 준다
+function frequentPartsView(scanId, findings, activePart) {
+  const byPart = new Map();
+  for (const f of findings) {
+    const { key, label } = partOf(f);
+    const cur = byPart.get(key) || { key, label, checks: 0, resources: 0, urgent: 0 };
+    cur.checks += 1;
+    cur.resources += f.totalCount || 0;
+    if (f.severity === "critical" || f.severity === "high") cur.urgent += 1;
+    byPart.set(key, cur);
+  }
+  const ranked = [...byPart.values()].sort((a, b) =>
+    (b.checks - a.checks) || (b.resources - a.resources) || (b.urgent - a.urgent));
+  if (!ranked.length) return null;
+  const totalChecks = findings.length || 1;
+  const top = ranked[0];
+  const topPct = Math.round((top.checks / totalChecks) * 100);
+  const sid = encodeURIComponent(scanId);
+  return h("section", { class: "card parts-card" },
+    h("h2", {}, "자주 실수하는 발생 파트 (취약 영역 분석)"),
+    h("p", {},
+      "가장 빈번하게 문제가 발생한 파트는 ",
+      h("strong", {}, top.label),
+      ` (실패 항목 ${top.checks}개 · 영향 리소스 ${top.resources}개, 전체의 ${topPct}%)입니다. 파트를 클릭하면 해당 항목만 모아 볼 수 있습니다.`),
+    h("ul", { class: "parts-list" }, ranked.map((item) => {
+      const pct = Math.max(4, Math.round((item.checks / totalChecks) * 100));
+      const selected = activePart === item.key;
+      const href = selected ? `#/scans/${sid}` : `#/scans/${sid}?part=${encodeURIComponent(item.key)}`;
+      return h("li", {},
+        h("a", { href, class: `part-row${selected ? " active" : ""}` },
+          h("div", { class: "part-head" },
+            h("span", { class: "part-name" },
+              h("strong", {}, item.label),
+              item.urgent ? [" ", h("span", { class: "badge b-high" }, `치명·높음 ${item.urgent}`)] : null),
+            h("span", { class: "small muted" }, `실패 항목 ${item.checks}개 · 리소스 ${item.resources}개 (${Math.round((item.checks / totalChecks) * 100)}%)`)),
+          svg("svg", { class: "part-bar", viewBox: "0 0 100 6", preserveAspectRatio: "none", "aria-hidden": "true" },
+            svg("rect", { x: 0, y: 0, width: 100, height: 6, class: "track" }),
+            svg("rect", { x: 0, y: 0, width: pct, height: 6, class: item.urgent ? "fill urgent" : "fill" }))));
+    })));
 }
 
 function priorityView(summary, findings) {
@@ -759,8 +849,11 @@ async function route() {
   const section = hash.startsWith("#/scans") ? "#/scans" : hash;
   for (const link of document.querySelectorAll("#nav a")) link.classList.toggle("active", link.getAttribute("href") === section);
   try {
-    if (hash.startsWith("#/scans/")) await reportView(decodeURIComponent(hash.slice("#/scans/".length)));
-    else if (hash === "#/scans") await scansView();
+    if (hash.startsWith("#/scans/")) {
+      const [rawId, rawQuery = ""] = hash.slice("#/scans/".length).split("?", 2);
+      const params = new URLSearchParams(rawQuery);
+      await reportView(decodeURIComponent(rawId), params.get("severity") || "", params.get("part") || "");
+    } else if (hash === "#/scans") await scansView();
     else if (hash === "#/connections") await connectionsView();
     else if (hash === "#/password") passwordView();
     else await dashboardView();

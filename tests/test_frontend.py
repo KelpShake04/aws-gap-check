@@ -25,6 +25,12 @@ class FrontendSafetyTest(unittest.TestCase):
         self.assertNotRegex(html, r"<script(?![^>]*\bsrc=)")
         self.assertNotRegex(html, r"\son[a-z]+\s*=")
 
+    def test_nav_order(self):
+        html = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+        nav_block = re.search(r"<nav>(.*?)</nav>", html, re.DOTALL).group(1)
+        hrefs = re.findall(r'href="([^"]+)"', nav_block)
+        self.assertEqual(hrefs, ["#/", "#/scans", "#/connections", "#/password"])
+
 
 if __name__ == "__main__":
     unittest.main()
