@@ -1,0 +1,26 @@
+# 의존성 갱신 PR을 매주 만든다. 병합 전 CI가 돌고, 배포는 관리자 승인 뒤에만 나간다.
+version: 2
+updates:
+  # requirements.txt는 해시 고정(--require-hashes)이라 Dependabot이 해시까지 같이 바꾼다
+  - package-ecosystem: pip
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 3
+  # 워크플로의 action은 커밋 SHA로 고정돼 있다
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 3
+  # Dockerfile(prowler, python), compose.yaml(mysql, caddy)의 이미지 태그
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 3
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 3
+    ignore:
+      # MySQL은 8.4 LTS 패치만 받는다. 9.x로 올리면 기존 데이터 볼륨을 되돌릴 수 없다
+      - dependency-name: mysql
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
