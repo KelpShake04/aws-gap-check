@@ -859,12 +859,13 @@ function ismsView(scanId, findings, covered, activeIsms) {
   const ranked = [...byItem.values()].sort((a, b) =>
     (Number(a.id === ISMS_BROAD) - Number(b.id === ISMS_BROAD)) || (b.urgent - a.urgent) ||
     (b.checks - a.checks) || ismsCompare(a.id, b.id));
-  const max = Math.max(...ranked.map((item) => item.checks));
+  // 포괄 항목(2.10.2)은 거의 모든 점검이 대응해 막대 기준에서 뺀다(그 막대는 100으로 꽉 찬다)
+  const max = Math.max(1, ...ranked.filter((item) => item.id !== ISMS_BROAD).map((item) => item.checks));
   const sid = encodeURIComponent(scanId);
   return h("section", { class: "card parts-card" },
     h("h2", {}, "ISMS-P 통제 항목 관점"),
     h("p", {},
-      covered ? `핵심 점검이 대응하는 ISMS-P 2023 통제 항목 ${covered}개 중 ` : "ISMS-P 2023 통제 항목 ",
+      covered ? `핵심 점검이 대응하는 ISMS-P 2023 통제 항목 ${Math.max(covered, byItem.size)}개 중 ` : "ISMS-P 2023 통제 항목 ",
       h("strong", {}, `${byItem.size}개`),
       "에서 미흡한 점검이 나왔습니다. 항목을 누르면 관련 점검만 모아 볼 수 있습니다."),
     h("ul", { class: "parts-list" }, ranked.map((item) => {
@@ -880,7 +881,7 @@ function ismsView(scanId, findings, covered, activeIsms) {
             h("span", { class: "small muted" }, `미흡 점검 ${item.checks}개`)),
           svg("svg", { class: "part-bar", viewBox: "0 0 100 6", preserveAspectRatio: "none", "aria-hidden": "true" },
             svg("rect", { x: 0, y: 0, width: 100, height: 6, class: "track" }),
-            svg("rect", { x: 0, y: 0, width: Math.max(4, Math.round((item.checks / max) * 100)), height: 6,
+            svg("rect", { x: 0, y: 0, width: Math.min(100, Math.max(4, Math.round((item.checks / max) * 100))), height: 6,
               class: item.urgent ? "fill urgent" : "fill" }))));
     })),
     h("p", { class: "small muted" },
@@ -900,6 +901,14 @@ function priorityView(summary, findings) {
     h("ol", {}, findings.slice(0, 3).map((f) => h("li", {}, badge(f.severity, SEVERITY), " ", titles[f.checkId]))));
 }
 
+// 포괄 항목(2.10.2)은 모든 카드에 붙어 정보가 없으므로 칩에서 뺀다
+function ismsChips(items) {
+  const shown = (items || []).filter((item) => item.id !== ISMS_BROAD);
+  return shown.length
+    ? h("div", { class: "isms-chips" }, shown.map((item) => h("span", { class: "chip" }, `ISMS-P ${item.id} ${item.name}`)))
+    : null;
+}
+
 function findingCard(f, isOpen, codeOpen) {
   const shown = f.resources.length;
   return h("article", { class: `card finding sev-${f.severity}` },
@@ -907,9 +916,7 @@ function findingCard(f, isOpen, codeOpen) {
       badge(f.severity, SEVERITY), " ",
       h("h3", {}, f.title || f.checkId),
       h("div", { class: "small muted" }, `${f.checkId} · ${f.service} · 리소스 ${f.totalCount}개`),
-      f.ismsP && f.ismsP.length
-        ? h("div", { class: "isms-chips" }, f.ismsP.map((item) => h("span", { class: "chip" }, `ISMS-P ${item.id} ${item.name}`)))
-        : null),
+      ismsChips(f.ismsP)),
     explanationView(f),
     h("details", { "data-check": f.checkId, open: isOpen },
       h("summary", {}, `영향받는 리소스 ${f.totalCount}개${shown < f.totalCount ? ` (처음 ${shown}개 표시)` : ""}`),
