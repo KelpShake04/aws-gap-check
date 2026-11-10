@@ -1,0 +1,70 @@
+name: deploy
+
+# main에 push된 커밋의 test가 성공하면 EC2에 배포한다(CD).
+# AWS 자격 증명은 OIDC로 받는다(저장된 액세스 키 없음). 맡는 Role은 infra/github-deploy.yaml이 만들고,
+# 고정된 SSM 문서(agc-deploy) 하나만 실행할 수 있다. 문서가 진행 중 스캔이 끝날 때까지 기다린다.
+on:
+  workflow_run:
+    workflows: [test]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # repo 변수(AWS_DEPLOY_ROLE_ARN)가 없으면 건너뛴다. job 수준 if는 environment 변수를 못 본다. 수동 실행도 main에서만 한다
+    if: >-
+      vars.AWS_DEPLOY_ROLE_ARN != '' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # Role 신뢰 정책이 이 environment 이름만 받는다(environment는 main 브랜치에서만 쓰게 설정)
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    # 배포는 하나씩. 진행 중인 배포를 취소하지 않는다
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      AWS_REGION: ap-northeast-2
+      SITE_URL: https://agc-kelp04.duckdns.org
+    steps:
+      - name: AWS 자격 증명(OIDC)
+        # 자격 증명을 다루는 액션이라 태그 대신 커밋 SHA로 고정한다(v6.3.0)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gh-deploy-${{ github.run_id }}
+
+      - name: SSM 배포 문서 실행
+        env:
+          INSTANCE_ID: ${{ vars.DEPLOY_INSTANCE_ID }}
+        run: |
+          cid=$(aws ssm send-command --document-name agc-deploy --instance-ids "$INSTANCE_ID" \
+            --comment "github run ${{ github.run_id }}" --query Command.CommandId --output text)
+          echo "command $cid"
+          # 진행 중 스캔 대기(최대 20분) + 빌드를 고려해 최대 28분 기다린다
+          for _ in $(seq 168); do
+            sleep 10
+            # 보낸 직후의 InvocationDoesNotExist만 대기로 보고, 권한 오류 등은 바로 실패시킨다
+            if ! status=$(aws ssm get-command-invocation --command-id "$cid" --instance-id "$INSTANCE_ID" \
+              --query Status --output text 2>"$RUNNER_TEMP/err"); then
+              grep -q InvocationDoesNotExist "$RUNNER_TEMP/err" || { cat "$RUNNER_TEMP/err"; exit 1; }
+              status=Pending
+            fi
+            case "$status" in Pending|InProgress|Delayed) continue ;; esac
+            break
+          done
+          aws ssm get-command-invocation --command-id "$cid" --instance-id "$INSTANCE_ID" \
+            --query '[StandardOutputContent, StandardErrorContent]' --output text | tail -40
+          [ "$status" = "Success" ] || { echo "배포 실패: $status"; exit 1; }
+
+      - name: 사이트 확인
+        run: curl -fsS -o /dev/null -w "%{http_code}\n" --retry 5 --retry-delay 3 "$SITE_URL/"
