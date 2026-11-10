@@ -12,9 +12,22 @@ import re
 from functools import lru_cache
 
 SEVERITIES = ("critical", "high", "medium", "low", "informational")
+SEVERITY_WEIGHTS = {"critical": 10, "high": 5, "medium": 2, "low": 1, "informational": 0}
 MAX_RESOURCES = 100
 # Prowler 메타데이터 Remediation.Code의 종류. 화면에 이 순서로 보인다(Other는 콘솔 절차)
 CODE_KINDS = ("Other", "CLI", "NativeIaC", "Terraform")
+
+
+def scores(counts) -> dict | None:
+    """스캔 counts에서 문제점 가중 점수(risk, 낮을수록 안전)와 보안 점수(security, 100점 만점)를 계산한다."""
+    if not isinstance(counts, dict) or not isinstance(counts.get("failedChecks"), int):
+        return None
+    risk = 0
+    for sev, weight in SEVERITY_WEIGHTS.items():
+        val = counts.get(sev, 0)
+        if isinstance(val, int) and not isinstance(val, bool) and val > 0:
+            risk += val * weight
+    return {"risk": risk, "security": max(0, 100 - risk)}
 
 
 def parse(findings: list):

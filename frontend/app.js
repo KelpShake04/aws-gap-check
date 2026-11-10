@@ -4,6 +4,7 @@ import * as auth from "./auth.js";
 import { createApi } from "./api.js";
 
 const SEVERITY = { critical: "치명", high: "높음", medium: "중간", low: "낮음", informational: "정보" };
+const WEIGHTS = { critical: 10, high: 5, medium: 2, low: 1, informational: 0 };
 const STATUS = {
   PENDING: "검증 전", ACTIVE: "연결됨", FAILED: "실패",
   QUEUED: "대기 중", RUNNING: "스캔 중", PROCESSING: "결과 처리 중", EXPLAINING: "AI 해설 중", DONE: "완료",
@@ -223,7 +224,8 @@ async function dashboardView() {
   const waiting = connections.length - active.length;
   const kpis = h("div", { class: "kpis" });
   const costs = new Map();
-  const latest = new Map(active.map((c) => [c.id, scans.find((s) => s.connectionId === c.id)]));
+  const byConn = new Map(active.map((c) => [c.id, scans.filter((s) => s.connectionId === c.id)]));
+  const latest = new Map(active.map((c) => [c.id, (byConn.get(c.id) || [])[0]]));
   const refreshKpis = () => kpis.replaceChildren(...kpiTiles(active.length, costs, latest));
   refreshKpis();
   render(
@@ -236,7 +238,7 @@ async function dashboardView() {
       h("a", { class: "button", href: "#/connections" }, "계정 연결하기")),
     waiting ? h("p", { class: "small muted" }, `검증이 끝나지 않은 연결 ${waiting}개 — `,
       h("a", { href: "#/connections" }, "계정 연결에서 마무리"), "하세요.") : null,
-    h("div", { class: "accounts" }, active.map((conn) => accountCard(conn, latest.get(conn.id), (cost) => {
+    h("div", { class: "accounts" }, active.map((conn) => accountCard(conn, byConn.get(conn.id) || [], (cost) => {
       costs.set(conn.id, cost);
       refreshKpis();
     }))));
@@ -263,7 +265,8 @@ function kpiTiles(accountCount, costs, latest) {
   ];
 }
 
-function accountCard(conn, scan, onCost) {
+function accountCard(conn, accountScans, onCost) {
+  const scan = accountScans[0];
   const costBox = h("div", {}, skeleton());
   const refresh = h("button", { type: "button", class: "ghost", disabled: true, onclick: () => loadCost(true) }, "↻ 새로고침");
   async function loadCost(force) {
@@ -296,7 +299,7 @@ function accountCard(conn, scan, onCost) {
     h("h3", { class: "block" }, "비용"),
     costBox,
     h("h3", { class: "block" }, "보안 점검"),
-    securityView(conn, scan),
+    securityView(conn, accountScans),
     h("h3", { class: "block" }, "자동 점검·알림"),
     scheduleView(conn, showSchedule));
 }
@@ -445,7 +448,109 @@ function ago(iso) {
   return `${Math.floor(seconds / 86400)}일 전`;
 }
 
-function securityView(conn, scan) {
+function scanScore(scan) {
+  if (!scan) return null;
+  if (scan.score && typeof scan.score.risk === "number" && typeof scan.score.security === "number") return scan.score;
+  const counts = scan.counts;
+  if (!counts || counts.failedChecks === undefined) return null;
+  const risk = Object.entries(WEIGHTS).reduce((sum, [sev, w]) => sum + Math.max(0, counts[sev] || 0) * w, 0);
+  return { risk, security: Math.max(0, 100 - risk) };
+}
+
+function shortDate(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${mm}/${dd} ${hh}:${mi}`;
+}
+
+function scoreDeltaChip(latest, prev, kind) {
+  if (!prev) return null;
+  const diff = latest[kind] - prev[kind];
+  if (diff === 0) return h("span", { class: "delta flat" }, "– 직전 대비 변동 없음");
+  // 문제점 점수(risk)는 낮아질수록 개선(down=초록), 보안 점수(security)는 높아질수록 개선(down=초록)
+  const improved = kind === "risk" ? diff < 0 : diff > 0;
+  const arrow = diff > 0 ? "▲" : "▼";
+  const word = kind === "risk" ? (diff < 0 ? "감소" : "증가") : (diff > 0 ? "상승" : "하락");
+  return h("span", { class: `delta ${improved ? "down" : "up"}` }, `${arrow} 직전 대비 ${Math.abs(diff)}점 ${word}`);
+}
+
+// 완료된 스캔 이력을 오래된 순으로 정렬해 문제점 점수(가중합) / 보안 점수(100점) 시계열 꺾은선 그래프를 그린다
+function scoreTrendView(accountScans, initialKind = "risk") {
+  const points = [...accountScans]
+    .filter((s) => s.status === "DONE" && scanScore(s))
+    .reverse()
+    .slice(-12)
+    .map((scan) => ({ scan, score: scanScore(scan) }));
+  if (!points.length) return null;
+
+  const box = h("div", { class: "trend-box" });
+  const draw = (kind) => {
+    const latest = points[points.length - 1].score;
+    const prev = points.length >= 2 ? points[points.length - 2].score : null;
+    const values = points.map((p) => p.score[kind]);
+    const maxVal = kind === "security" ? 100 : Math.max(...values, 10);
+    const X0 = 36, X1 = 584, W = X1 - X0, Y0 = 18, Y1 = 86, H = Y1 - Y0;
+    const n = points.length;
+    const coords = points.map((p, i) => {
+      const x = n === 1 ? Math.round((X0 + X1) / 2) : Math.round(X0 + (i / (n - 1)) * W);
+      const y = Math.round(Y1 - (Math.max(0, Math.min(maxVal, p.score[kind])) / maxVal) * H);
+      return { x, y, ...p };
+    });
+    const polyPoints = coords.map((c) => `${c.x},${c.y}`).join(" ");
+    const areaPoints = `${coords[0].x},${Y1} ${polyPoints} ${coords[coords.length - 1].x},${Y1}`;
+    const isRisk = kind === "risk";
+    const label = isRisk ? "문제점 점수 시계열 추이" : "보안 점수 시계열 추이";
+
+    box.replaceChildren(
+      h("div", { class: "trend-head" },
+        h("div", { class: "trend-summary" },
+          h("span", { class: "small muted" }, isRisk ? "문제점 점수 추이 (낮을수록 안전)" : "보안 점수 추이 (100점 만점)"),
+          h("div", { class: "trend-now" },
+            h("strong", {}, isRisk ? `${latest.risk}점` : `${latest.security}점`),
+            h("span", { class: "small muted" }, isRisk ? `보안 ${latest.security}/100` : `문제점 ${latest.risk}점`),
+            scoreDeltaChip(latest, prev, kind))),
+        h("div", { class: "trend-toggle", role: "group", "aria-label": "점수 기준 선택" },
+          h("button", { type: "button", class: isRisk ? "ghost active" : "ghost", onclick: () => draw("risk") }, "문제점 점수"),
+          h("button", { type: "button", class: !isRisk ? "ghost active" : "ghost", onclick: () => draw("security") }, "보안 점수"))),
+      svg("svg", { class: `trend ${kind}`, viewBox: "0 0 600 116", role: "img", "aria-label": label },
+        svg("text", { x: 0, y: Y0 + 4, class: "tick" }, String(maxVal)),
+        svg("line", { x1: X0, x2: X1, y1: Y0 + 0.5, y2: Y0 + 0.5, class: "grid" }),
+        svg("text", { x: 0, y: Math.round((Y0 + Y1) / 2) + 4, class: "tick" }, String(Math.round(maxVal / 2))),
+        svg("line", { x1: X0, x2: X1, y1: Math.round((Y0 + Y1) / 2) + 0.5, y2: Math.round((Y0 + Y1) / 2) + 0.5, class: "grid" }),
+        svg("text", { x: 0, y: Y1 + 4, class: "tick" }, "0"),
+        svg("line", { x1: X0, x2: X1, y1: Y1 + 0.5, y2: Y1 + 0.5, class: "axis" }),
+        n >= 2 ? svg("polygon", { points: areaPoints, class: "trend-area" }) : null,
+        n >= 2 ? svg("polyline", { points: polyPoints, class: "trend-line" }) : null,
+        coords.map((c, i) => [
+          svg("text", { x: c.x, y: Math.max(12, c.y - 8), class: "trend-val" }, String(c.score[kind])),
+          svg("circle", {
+            cx: c.x, cy: c.y, r: i === n - 1 ? 5 : 4,
+            class: i === n - 1 ? "dot latest" : "dot",
+            onclick: () => { location.hash = `#/scans/${c.scan.id}`; },
+          }, svg("title", {}, `${fmt(c.scan.createdAt)} · 문제점 ${c.score.risk}점 · 보안 ${c.score.security}점 (치명 ${c.scan.counts.critical || 0}, 높음 ${c.scan.counts.high || 0})`)),
+        ]),
+        n === 1
+          ? svg("text", { x: coords[0].x, y: 106, class: "tick mid" }, shortDate(coords[0].scan.createdAt))
+          : [
+            svg("text", { x: X0, y: 106, class: "tick" }, shortDate(coords[0].scan.createdAt)),
+            n >= 3 ? svg("text", { x: coords[Math.floor(n / 2)].x, y: 106, class: "tick mid" }, shortDate(coords[Math.floor(n / 2)].scan.createdAt)) : null,
+            svg("text", { x: X1, y: 106, class: "tick end" }, `${shortDate(coords[n - 1].scan.createdAt)} (최신)`),
+          ]),
+      h("p", { class: "small muted trend-note" },
+        n === 1
+          ? "스캔이 2회 이상 쌓이면 시계열 변화 추이 선이 표시됩니다. (가중치: 치명×10, 높음×5, 중간×2, 낮음×1)"
+          : "점을 클릭하면 해당 스캔 리포트로 이동합니다. (가중치: 치명×10, 높음×5, 중간×2, 낮음×1)"));
+  };
+  draw(initialKind);
+  return box;
+}
+
+function securityView(conn, accountScans) {
+  const scan = accountScans[0];
   const startButton = h("button", {
     type: "button",
     onclick: async () => {
@@ -460,11 +565,43 @@ function securityView(conn, scan) {
     },
   }, "스캔 시작");
   if (!scan) return h("div", { class: "scan-row" }, h("span", { class: "muted" }, "아직 스캔이 없습니다."), startButton);
+  if (!FINAL.includes(scan.status)) {
+    startButton.disabled = true;
+    startButton.textContent = "스캔 중…";
+  }
   return h("div", {},
     h("div", { class: "scan-row" },
       h("span", {}, badge(scan.status), " ", h("span", { class: "muted small" }, fmt(scan.createdAt))),
       h("span", { class: "scan-actions" }, h("a", { href: `#/scans/${scan.id}` }, "결과 보기"), startButton)),
-    scan.status === "DONE" ? severityBar(scan.counts) : null);
+    scan.status === "DONE" ? severityBar(scan.counts) : null,
+    scoreTrendView(accountScans));
+}
+
+function scansTrendSection(scans, connections) {
+  const done = scans.filter((s) => s.status === "DONE" && scanScore(s));
+  if (!done.length) return null;
+  const accountLabels = new Map();
+  for (const conn of connections) {
+    if (conn.accountId) accountLabels.set(conn.id, conn.accountId);
+  }
+  for (const scan of done) {
+    if (!accountLabels.has(scan.connectionId)) accountLabels.set(scan.connectionId, scan.accountId || scan.connectionId);
+  }
+  const connIds = [...new Set(done.map((s) => s.connectionId))];
+  const chartHolder = h("div", {}, scoreTrendView(done.filter((s) => s.connectionId === connIds[0])));
+  const acctSelect = connIds.length > 1
+    ? h("select", {
+      "aria-label": "추이 그래프 계정 선택",
+      onchange: () => {
+        chartHolder.replaceChildren(scoreTrendView(done.filter((s) => s.connectionId === acctSelect.value)));
+      },
+    }, connIds.map((id) => h("option", { value: id }, accountLabels.get(id) || id)))
+    : h("span", { class: "muted small" }, `계정 ${accountLabels.get(connIds[0]) || "-"}`);
+  return h("section", { class: "card" },
+    h("div", { class: "page-head" },
+      h("h2", { class: "section-title" }, "계정 점수 변화 추이"),
+      acctSelect),
+    chartHolder);
 }
 
 // ---------- 스캔 목록 ----------
@@ -489,16 +626,21 @@ async function scansView() {
       },
     }, h("label", {}, "계정 ", select), button)
     : h("p", {}, "먼저 ", h("a", { href: "#/connections" }, "계정을 연결"), "하세요.");
-  const rows = scans.map((scan) => h("tr", {},
-    h("td", {}, h("a", { href: `#/scans/${scan.id}` }, fmt(scan.createdAt))),
-    h("td", {}, scan.accountId || "-"),
-    h("td", {}, badge(scan.status)),
-    h("td", {}, scan.counts && scan.counts.failedChecks !== undefined
-      ? `치명 ${scan.counts.critical} · 높음 ${scan.counts.high} · 실패 항목 ${scan.counts.failedChecks}` : "-")));
+  const rows = scans.map((scan) => {
+    const sc = scanScore(scan);
+    return h("tr", {},
+      h("td", {}, h("a", { href: `#/scans/${scan.id}` }, fmt(scan.createdAt))),
+      h("td", {}, scan.accountId || "-"),
+      h("td", {}, badge(scan.status)),
+      h("td", {}, sc
+        ? `문제점 ${sc.risk}점 (보안 ${sc.security}점) · 치명 ${scan.counts.critical} · 높음 ${scan.counts.high} · 실패 항목 ${scan.counts.failedChecks}`
+        : "-"));
+  });
   render(
     h("h1", {}, "스캔"),
     h("section", { class: "card" }, startForm,
       h("p", { class: "small muted" }, "핵심 점검 항목(S3 공개, Security Group, IAM, 암호화)을 읽기 전용으로 확인합니다. 보통 몇 분 걸립니다.")),
+    scansTrendSection(scans, connections),
     scans.length
       ? h("table", { class: "list" },
         h("thead", {}, h("tr", {}, ["시작 시각", "계정", "상태", "결과"].map((t) => h("th", {}, t)))),
