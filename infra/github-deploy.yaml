@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  aws-gap-check CD. GitHub Actions(main, environment production)가 OIDC로 이 Role을 맡아
+  고정된 SSM 배포 문서 하나만 EC2에 실행한다. 액세스 키를 쓰지 않고, 임의 명령은 실행할 수 없다.
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Default: KelpShake04/aws-gap-check
+    AllowedPattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+  GitHubEnvironment:
+    Type: String
+    Default: production
+    AllowedPattern: "^[A-Za-z0-9_-]{1,50}$"
+    Description: 이 environment로 실행된 job만 Role을 맡을 수 있다(environment는 main 브랜치에서만 쓰게 설정)
+  InstanceId:
+    Type: AWS::EC2::Instance::Id
+    Description: 배포 대상(aws-gap-check-ec2 스택의 인스턴스)
+  CreateOidcProvider:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: 계정에 GitHub OIDC provider가 이미 있으면 false
+
+Conditions:
+  MakeProvider: !Equals [!Ref CreateOidcProvider, "true"]
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: MakeProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  # 배포 절차를 문서 안에 고정한다. Role은 이 문서만 실행할 수 있으므로 워크플로가 탈취돼도 다른 명령은 못 보낸다
+  DeployDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      Name: agc-deploy
+      DocumentType: Command
+      DocumentFormat: YAML
+      # 이름이 고정이라 교체(Replace) 대신 새 버전으로 갱신한다
+      UpdateMethod: NewVersion
+      Content:
+        schemaVersion: "2.2"
+        description: aws-gap-check main 최신 커밋 배포(진행 중 스캔이 끝날 때까지 대기)
+        mainSteps:
+          - action: aws:runShellScript
+            name: deploy
+            inputs:
+              timeoutSeconds: "1800"
+              runCommand:
+                - set -eu
+                - cd /opt/aws-gap-check
+                # 워크플로가 시간 초과 후 다시 실행돼도 인스턴스에서 배포가 겹치지 않게 한다
+                - exec 9>/run/agc-deploy.lock
+                - flock -n 9 || { echo "이미 배포가 진행 중입니다"; exit 1; }
+                # 배포 대상은 실행 시점의 origin/main 최신 커밋이다(워크플로를 부른 커밋과 다를 수 있음)
+                - git fetch --quiet origin main
+                - echo "before $(git rev-parse --short HEAD) after $(git rev-parse --short FETCH_HEAD)"
+                - git merge --ff-only --quiet FETCH_HEAD
+                # 빌드를 먼저 끝내 둬서 스캔 확인과 컨테이너 교체 사이의 틈을 줄인다(앱 코드는 이미지 안에 있어 실행 중인 앱엔 영향 없음)
+                - docker compose build --quiet app
+                - echo "SELECT COUNT(*) FROM scans WHERE status NOT IN ('DONE','FAILED','DELETED');" > /tmp/agc-busy.sql
+                - |
+                  busy() { docker compose exec -T mysql sh -c 'mysql -N -ugapcheck -p"$MYSQL_PASSWORD" gapcheck' < /tmp/agc-busy.sql; }
+                  # 재시작하면 진행 중 스캔(QUEUED~EXPLAINING)이 끊기므로 끝날 때까지 최대 20분 기다린다
+                  for i in $(seq 120); do
+                    n=$(busy)
+                    [ "$n" = "0" ] && break
+                    echo "진행 중 스캔 $n개, 대기 중 ($i/120)"
+                    sleep 10
+                  done
+                  [ "$(busy)" = "0" ] || { echo "진행 중 스캔이 끝나지 않아 배포를 중단합니다"; exit 1; }
+                - rm -f /tmp/agc-busy.sql
+                - docker compose up -d
+                - |
+                  for i in $(seq 30); do
+                    if docker compose exec -T app python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/', timeout=5)" 2>/dev/null; then
+                      echo "deployed $(git rev-parse --short HEAD)"; exit 0
+                    fi
+                    sleep 2
+                  done
+                  echo "앱이 응답하지 않습니다"; docker compose logs --tail 30 app; exit 1
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-gap-check-github-deploy
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - MakeProvider
+                - !Ref GitHubOidcProvider
+                - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubRepo}:environment:${GitHubEnvironment}"
+      Policies:
+        - PolicyName: run-deploy-document
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ssm:SendCommand
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${InstanceId}"
+                  - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${DeployDocument}"
+              # 결과 조회 API는 리소스 단위 권한을 지원하지 않는다
+              - Effect: Allow
+                Action: ssm:GetCommandInvocation
+                Resource: "*"
+
+Outputs:
+  DeployRoleArn:
+    Value: !GetAtt DeployRole.Arn
+  DocumentName:
+    Value: !Ref DeployDocument
