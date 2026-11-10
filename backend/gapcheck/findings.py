@@ -146,7 +146,8 @@ def isms_p_index(root: str | None = None) -> dict:
                 and isinstance(name, str)):
             continue
         item = {"id": item_id, "name": name[:100]}
-        for check in req.get("Checks") or []:
+        checks = req.get("Checks")
+        for check in checks if isinstance(checks, list) else []:
             if isinstance(check, str) and item not in index.setdefault(check, []):
                 index[check].append(item)
     for items in index.values():
@@ -164,7 +165,8 @@ def isms_p(check_id, root: str | None = None) -> list:
 def isms_p_covered(check_ids, root: str | None = None) -> int:
     """check 목록이 대응하는 ISMS-P 통제 항목 수(중복 제외)."""
     index = isms_p_index(root)
-    return len({item["id"] for check in check_ids for item in index.get(check, [])})
+    return len({item["id"] for check in check_ids if isinstance(check, str)
+                for item in index.get(check, [])})
 
 
 def _unfence(text: str) -> str:

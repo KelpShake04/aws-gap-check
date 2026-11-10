@@ -37,10 +37,10 @@ def finding_view(group: dict) -> dict:
 @functools.lru_cache(maxsize=1)
 def isms_p_covered() -> int:
     """핵심 점검 목록(scanner/core-checks.json)이 대응하는 ISMS-P 통제 항목 수. 리포트의 분모로 쓴다."""
-    import run_scan  # scanner/run_scan.py: 스캐너와 같은 핵심 점검 파일을 읽는다
     try:
+        import run_scan  # scanner/run_scan.py: 스캐너와 같은 핵심 점검 파일을 읽는다
         checks = json.loads((run_scan.HERE / "core-checks.json").read_text(encoding="utf-8"))["aws"]
-    except (OSError, ValueError, KeyError, TypeError):
+    except (ImportError, OSError, ValueError, KeyError, TypeError):
         return 0
     return findings.isms_p_covered(checks)
 
