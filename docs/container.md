@@ -89,6 +89,25 @@ EC2에서는 `.env`에 `DEMO_FIXTURE`를 넣지 않는다. 그러면 앱이 인�
 
 user data 로그는 `/var/log/cloud-init-output.log`.
 
+## 자동 배포 (CD)
+
+main에 push된 커밋의 `test` 워크플로가 성공하면 `deploy` 워크플로가 EC2에 배포한다(`.github/workflows/deploy.yml`).
+
+- 자격 증명: GitHub OIDC로 `aws-gap-check-github-deploy` Role을 맡는다. 저장된 액세스 키가 없다. Role 신뢰 정책은 `repo:KelpShake04/aws-gap-check:environment:production`만 받고, GitHub environment `production`은 main 브랜치에서만 쓸 수 있다.
+- 권한: 그 인스턴스에 고정 SSM 문서 `aws-gap-check-deploy` 하나만 실행(`ssm:SendCommand`) + 결과 조회. 문서 내용이 고정이라 워크플로가 탈취돼도 임의 명령은 보낼 수 없다.
+- 문서 동작: 진행 중 스캔(`DONE`·`FAILED`·`DELETED`가 아닌 것)이 끝날 때까지 최대 20분 기다림 → `git fetch origin main` + `git merge --ff-only` → `docker compose up -d --build` → 앱 응답 확인. 스캔이 계속 진행 중이면 배포를 중단한다.
+- 처음 한 번 설정(관리자 권한, 서울 리전):
+  ```bash
+  aws cloudformation deploy --region ap-northeast-2 --stack-name aws-gap-check-github-deploy \
+    --template-file infra/github-deploy.yaml --capabilities CAPABILITY_NAMED_IAM \
+    --parameter-overrides InstanceId=<EC2 인스턴스 ID>
+  gh variable set AWS_DEPLOY_ROLE_ARN --body "$(aws cloudformation describe-stacks --region ap-northeast-2 \
+    --stack-name aws-gap-check-github-deploy --query "Stacks[0].Outputs[?OutputKey=='DeployRoleArn'].OutputValue" --output text)"
+  gh variable set DEPLOY_INSTANCE_ID --body <EC2 인스턴스 ID>
+  ```
+  `AWS_DEPLOY_ROLE_ARN` 변수가 없으면 배포 job은 건너뛴다. 계정에 GitHub OIDC provider가 이미 있으면 `CreateOidcProvider=false`를 더한다.
+- 수동 실행: Actions → deploy → Run workflow(main).
+
 ## 테스트
 
 ```bash
