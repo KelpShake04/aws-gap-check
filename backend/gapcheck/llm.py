@@ -121,7 +121,38 @@ def _send(request, api_key: str, timeout: float, opener) -> dict:
         raise InvalidResponse("API 응답이 JSON이 아님") from None
 
 
-def _parse_candidate(payload: dict) -> dict:
+def generate_chat(system: str, contents: list, tools: list, *, model: str, api_key: str,
+                  allow_tools: bool = True, timeout: float = DEFAULT_TIMEOUT,
+                  max_output_tokens: int = 2048, opener=urllib.request.urlopen) -> dict:
+    """function calling 대화 한 걸음. 모델 응답 content({"role": "model", "parts": [...]})를 그대로 돌려준다.
+
+    Gemini 3 계열은 functionCall part의 thoughtSignature를 다음 요청에 그대로 돌려줘야 하므로(없으면 400)
+    호출하는 쪽은 이 content를 고치지 않고 대화 기록에 붙인다. allow_tools=False면 도구 선언은 둔 채
+    도구 호출을 막는다(기록에 functionCall이 있어도 마지막 답을 글로 받기 위해).
+    """
+    model = model[len("models/"):] if model.startswith("models/") else model
+    body = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": contents,
+        "tools": tools,
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": max_output_tokens},
+    }
+    if not allow_tools:
+        body["toolConfig"] = {"functionCallingConfig": {"mode": "NONE"}}
+    request = urllib.request.Request(
+        f"{API_BASE}/models/{urllib.parse.quote(model)}:generateContent",
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={**_headers(api_key), "Content-Type": "application/json"},
+        method="POST",
+    )
+    content = _checked_candidate(_send(request, api_key, timeout, opener)).get("content")
+    if not isinstance(content, dict) or not isinstance(content.get("parts"), list):
+        raise InvalidResponse("응답에 content가 없음")
+    return {"role": "model", "parts": content["parts"]}
+
+
+def _checked_candidate(payload: dict) -> dict:
+    """차단·잘림을 확인한 첫 후보."""
     block_reason = (payload.get("promptFeedback") or {}).get("blockReason")
     if block_reason:
         raise BlockedResponse(f"prompt blocked: {block_reason}")
@@ -134,6 +165,11 @@ def _parse_candidate(payload: dict) -> dict:
         raise BlockedResponse(f"finishReason={finish_reason}")
     if finish_reason != "STOP":
         raise InvalidResponse(f"finishReason={finish_reason}")
+    return candidate
+
+
+def _parse_candidate(payload: dict) -> dict:
+    candidate = _checked_candidate(payload)
     parts = (candidate.get("content") or {}).get("parts") or []
     text = "".join(part.get("text", "") for part in parts if not part.get("thought"))
     try:

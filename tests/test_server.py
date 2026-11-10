@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 if not hasattr(hashlib, "scrypt"):
     raise unittest.SkipTest("hashlib.scrypt 없음(LibreSSL 빌드): 앱 이미지 안에서 실행하세요")
 
-from gapcheck import auth, billing, explain, findings, server, worker  # noqa: E402
+from gapcheck import auth, billing, explain, findings, llm, server, worker  # noqa: E402
 from tests import FIXTURES, ROOT  # noqa: E402
 from tests.dbutil import fresh_store  # noqa: E402
 from tests.fakes import FakeCe, FakeSts  # noqa: E402
@@ -179,6 +179,51 @@ class ServerTest(unittest.TestCase):
                 self.assertEqual(anon.request(method, path)[0], 401)
         anon.cookie = "A" * 43
         self.assertEqual(anon.request("GET", "/api/scans")[0], 401)
+
+    def done_scan(self, client):
+        status, body = client.request("POST", "/api/connections")
+        conn = body["connection"]
+        self.sts.allowed[conn["externalId"]] = ACCOUNT
+        client.request("POST", f"/api/connections/{conn['id']}/verify", {"accountId": ACCOUNT})
+        status, body = client.request("POST", "/api/scans", {"connectionId": conn["id"]})
+        self.assertEqual(status, 202)
+        return body["scan"]["id"]
+
+    # ---------- AI 상담 ----------
+    def test_chat_requires_done_scan_owner_and_limits(self):
+        alice, _ = self.user()
+        scan_id = self.done_scan(alice)
+        question = {"question": "뭐부터 고쳐?"}
+        self.assertEqual(alice.request("POST", f"/api/scans/{scan_id}/chat", question)[0], 503)  # Gemini 설정 없음
+
+        asked = []
+
+        def chat(system, contents, tools, allow_tools):
+            asked.append(contents[-1])
+            return {"role": "model", "parts": [{"text": "열린 SSH부터 막으세요."}]}
+        self.deps.chat = chat
+        self.assertEqual(alice.request("POST", f"/api/scans/{scan_id}/chat", question)[0], 400)  # 아직 QUEUED
+        self.assertTrue(self.worker.run_once())
+        status, body = alice.request("POST", f"/api/scans/{scan_id}/chat", question)
+        self.assertEqual((status, body), (200, {"answer": "열린 SSH부터 막으세요.", "toolCalls": []}))
+        self.assertEqual(alice.request("POST", f"/api/scans/{scan_id}/chat", {"question": ""})[0], 400)
+        self.assertEqual(alice.request("POST", f"/api/scans/{scan_id}/chat", question, csrf=False)[0], 403)
+
+        bob, _ = self.user("bob@example.com")
+        self.assertEqual(bob.request("POST", f"/api/scans/{scan_id}/chat", question)[0], 404)
+
+        # 사용자당 10분에 10번(위의 200 한 번과 빈 질문 400 한 번이 세어졌다. 상태·CSRF 거절은 세지 않는다)
+        for _ in range(server.CHAT_LIMIT - 2):
+            self.assertEqual(alice.request("POST", f"/api/scans/{scan_id}/chat", question)[0], 200)
+        self.assertEqual(alice.request("POST", f"/api/scans/{scan_id}/chat", question)[0], 429)
+        self.clock.value += timedelta(seconds=server.CHAT_WINDOW_SECONDS + 1)
+
+        def failing(*args):
+            raise llm.TransientError("HTTP 503: overloaded")
+        self.deps.chat = failing
+        status, body = alice.request("POST", f"/api/scans/{scan_id}/chat", question)
+        self.assertEqual(status, 503)
+        self.assertNotIn("overloaded", json.dumps(body))
 
     # ---------- 연결·스캔 ----------
     def test_full_flow_and_user_isolation(self):

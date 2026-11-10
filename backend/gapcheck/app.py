@@ -56,6 +56,21 @@ class DemoMailer:
         logger.warning("DEMO MAIL to %s: %s\n%s", to, subject, body)
 
 
+class DemoChat:
+    """데모 모드 전용: Gemini 없이 Agent 흐름(도구 호출 → 결과로 답)을 보여 준다."""
+
+    def __call__(self, system, contents, tools, allow_tools):
+        response = contents[-1]["parts"][0].get("functionResponse")
+        if response is None and allow_tools:
+            return {"role": "model", "parts": [{"functionCall": {"name": "list_findings", "args": {}}}]}
+        result = ((response or {}).get("response") or {}).get("result") or {}
+        lines = [f"{i + 1}. {c['title']} ({c['severity']}, 리소스 {c['affected_resources']}개)"
+                 for i, c in enumerate(result.get("failed_checks", [])[:3])]
+        return {"role": "model", "parts": [{"text": "[데모 모드 답변] 이 스캔에서 먼저 볼 항목입니다.\n"
+                                                     + "\n".join(lines)
+                                                     + "\n운영에서는 Gemini가 질문에 맞는 도구를 골라 답합니다."}]}
+
+
 def ce_client(credentials):
     """Cost Explorer는 us-east-1 하나뿐이다. 고객 계정의 임시 자격 증명으로 만든다."""
     import boto3
@@ -88,6 +103,41 @@ def explainer_factory(env, store, ssm_client):
     model = env.get("GEMINI_MODEL", "")
     fallback_model = env.get("GEMINI_FALLBACK_MODEL", "")
     max_rpm = int(env.get("GEMINI_MAX_RPM", "10"))
+    api_key = gemini_key_loader(env, ssm_client)
+
+    def make_explainer():
+        key = api_key() if model else ""
+        generate = fallback_generate = None
+        if key:
+            def generate(system, user, schema):
+                return llm.generate_json(system, user, schema, model=model, api_key=key)
+            if fallback_model and fallback_model != model:
+                def fallback_generate(system, user, schema):
+                    return llm.generate_json(system, user, schema, model=fallback_model, api_key=key)
+        return explain.Explainer(generate, store, fallback_generate=fallback_generate,
+                                 model=model, fallback_model=fallback_model, max_rpm=max_rpm)
+
+    return make_explainer
+
+
+def chat_factory(env, ssm_client):
+    """AI 상담용 function calling 호출. 모델 설정이 없으면 None(화면에서 '쓸 수 없음')."""
+    model = env.get("GEMINI_MODEL", "")
+    if not model:
+        return None
+    api_key = gemini_key_loader(env, ssm_client)
+
+    def chat(system, contents, tools, allow_tools):
+        key = api_key()
+        if not key:
+            raise llm.LLMError("Gemini 키 없음")
+        return llm.generate_chat(system, contents, tools, model=model, api_key=key, allow_tools=allow_tools)
+
+    return chat
+
+
+def gemini_key_loader(env, ssm_client):
+    """Gemini 키를 처음 쓸 때 한 번 읽어 메모리에만 두는 함수를 돌려준다."""
     cached = {}
 
     def api_key() -> str:
@@ -103,19 +153,7 @@ def explainer_factory(env, store, ssm_client):
                     logger.error("Gemini key unavailable: %s", type(err).__name__)
         return cached["key"]
 
-    def make_explainer():
-        key = api_key() if model else ""
-        generate = fallback_generate = None
-        if key:
-            def generate(system, user, schema):
-                return llm.generate_json(system, user, schema, model=model, api_key=key)
-            if fallback_model and fallback_model != model:
-                def fallback_generate(system, user, schema):
-                    return llm.generate_json(system, user, schema, model=fallback_model, api_key=key)
-        return explain.Explainer(generate, store, fallback_generate=fallback_generate,
-                                 model=model, fallback_model=fallback_model, max_rpm=max_rpm)
-
-    return make_explainer
+    return api_key
 
 
 def main(env=os.environ) -> None:
@@ -140,6 +178,7 @@ def main(env=os.environ) -> None:
         mailer = notify.SesMailer(boto3.client("sesv2"), env["MAIL_FROM"]) if env.get("MAIL_FROM") else None
 
     make_explainer = explainer_factory(env, store, ssm)
+    chat = DemoChat() if fixture else chat_factory(env, ssm)
     data_dir = pathlib.Path(env.get("DATA_DIR", "/data"))
     daily_limit = int(env.get("DAILY_SCAN_LIMIT", "10"))
     notifier = notify.Notifier(store, mailer, env.get("SITE_URL", "")) if mailer else None
@@ -152,7 +191,7 @@ def main(env=os.environ) -> None:
                        daily_limit=daily_limit,
                        frontend_dir=pathlib.Path(env.get("FRONTEND_DIR", app_dir / "frontend")),
                        template_file=pathlib.Path(env.get("TEMPLATE_FILE", app_dir / "customer-role.yaml")),
-                       demo=bool(fixture), cost=cost, notifier=notifier)
+                       demo=bool(fixture), cost=cost, notifier=notifier, chat=chat)
     port = int(env.get("PORT", "8080"))
     logger.info("listening on :%d", port)
     server.make_server(deps, "0.0.0.0", port).serve_forever()

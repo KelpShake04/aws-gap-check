@@ -124,20 +124,20 @@ def _prowler_root() -> str:
 
 
 @lru_cache(maxsize=4)
-def isms_p_index(root: str | None = None) -> dict:
-    """check ID → ISMS-P 통제 항목 [{id, name}] 목록. 없으면 {}.
+def isms_p_requirements(root: str | None = None) -> tuple:
+    """Prowler에 들어 있는 KISA ISMS-P 2023(한국어) 요구사항 ({id, name, description, checks}, ...). 없으면 ().
 
-    Prowler에 들어 있는 KISA ISMS-P 2023(한국어) 매핑 파일을 읽는다. 결과는 공유 캐시라 바꾸지 않는다.
+    결과는 공유 캐시라 바꾸지 않는다.
     """
     root = root or _prowler_root()
     if not root:
-        return {}
+        return ()
     try:
         with open(os.path.join(root, "compliance", "aws", ISMS_P_FILE), encoding="utf-8") as f:
             requirements = json.load(f)["Requirements"]
     except (OSError, ValueError, KeyError, TypeError):
-        return {}
-    index = {}
+        return ()
+    result = []
     for req in requirements if isinstance(requirements, list) else []:
         if not isinstance(req, dict):
             continue
@@ -145,9 +145,20 @@ def isms_p_index(root: str | None = None) -> dict:
         if not (isinstance(item_id, str) and re.fullmatch(r"[0-9]{1,2}(\.[0-9]{1,2}){1,3}", item_id)
                 and isinstance(name, str)):
             continue
-        item = {"id": item_id, "name": name[:100]}
-        for check in req.get("Checks") or []:
-            if isinstance(check, str) and item not in index.setdefault(check, []):
+        checks = tuple(dict.fromkeys(c for c in req.get("Checks") or [] if isinstance(c, str)))
+        result.append({"id": item_id, "name": name[:100],
+                       "description": _text(req.get("Description"), 1000), "checks": checks})
+    return tuple(result)
+
+
+@lru_cache(maxsize=4)
+def isms_p_index(root: str | None = None) -> dict:
+    """check ID → ISMS-P 통제 항목 [{id, name}] 목록. 없으면 {}. 결과는 공유 캐시라 바꾸지 않는다."""
+    index = {}
+    for req in isms_p_requirements(root):
+        item = {"id": req["id"], "name": req["name"]}
+        for check in req["checks"]:
+            if item not in index.setdefault(check, []):
                 index[check].append(item)
     for items in index.values():
         items.sort(key=lambda item: tuple(int(part) for part in item["id"].split(".")))

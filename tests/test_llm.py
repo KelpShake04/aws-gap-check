@@ -213,5 +213,39 @@ class ListModelsTest(unittest.TestCase):
             self.assertNotIn(KEY, request.full_url)
 
 
+class GenerateChatTest(unittest.TestCase):
+    TOOLS = [{"functionDeclarations": [{"name": "list_findings", "parameters": {"type": "object", "properties": {}}}]}]
+
+    def chat(self, payload, **kwargs):
+        opener = FakeOpener(payload)
+        contents = [{"role": "user", "parts": [{"text": "질문"}]}]
+        result = llm.generate_chat("system", contents, self.TOOLS, model="models/gemini-test",
+                                   api_key=KEY, opener=opener, **kwargs)
+        return result, json.loads(opener.requests[0].data), opener.requests[0]
+
+    def test_sends_tools_and_returns_parts_untouched(self):
+        parts = [{"functionCall": {"name": "list_findings", "args": {}}, "thoughtSignature": "c2ln"}]
+        result, body, request = self.chat({"candidates": [{"content": {"role": "model", "parts": parts},
+                                                           "finishReason": "STOP"}]})
+        # thoughtSignature가 남아 있어야 다음 요청에 그대로 돌려줄 수 있다(Gemini 3는 없으면 400)
+        self.assertEqual(result, {"role": "model", "parts": parts})
+        self.assertEqual(body["tools"], self.TOOLS)
+        self.assertNotIn("toolConfig", body)
+        self.assertTrue(request.full_url.endswith("/models/gemini-test:generateContent"))
+        self.assertEqual(request.get_header("X-goog-api-key"), KEY)
+
+    def test_allow_tools_false_blocks_calls(self):
+        _, body, _ = self.chat({"candidates": [{"content": {"parts": [{"text": "답"}]}, "finishReason": "STOP"}]},
+                               allow_tools=False)
+        self.assertEqual(body["toolConfig"], {"functionCallingConfig": {"mode": "NONE"}})
+        self.assertEqual(body["tools"], self.TOOLS)
+
+    def test_missing_content_and_blocked(self):
+        with self.assertRaises(llm.InvalidResponse):
+            self.chat({"candidates": [{"finishReason": "STOP"}]})
+        with self.assertRaises(llm.BlockedResponse):
+            self.chat({"candidates": [{"finishReason": "SAFETY"}]})
+
+
 if __name__ == "__main__":
     unittest.main()
