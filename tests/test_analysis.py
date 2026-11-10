@@ -190,6 +190,17 @@ class ExplainTest(unittest.TestCase):
         self.assertEqual(explainer.explain(self.groups[0]), (GOOD, "gemini"))
         self.assertEqual(len(fallback.prompts), 1)
 
+    def test_fallback_model_is_kept_for_rest_of_scan(self):
+        generate = Recorder(*[llm.TransientError("HTTP 503")] * explain.TRANSIENT_ATTEMPTS)
+        fallback = Recorder()
+        explainer = self.explainer(generate, fallback=fallback)
+        explainer.explain(self.groups[0])
+        self.sleeps.clear()
+        self.assertEqual(explainer.explain(self.groups[1]), (GOOD, "gemini"))
+        self.assertEqual(len(generate.prompts), explain.TRANSIENT_ATTEMPTS)
+        self.assertEqual(len(fallback.prompts), 2)
+        self.assertEqual([s for s in self.sleeps if s >= explain.TRANSIENT_WAIT], [])
+
     def test_fallback_answer_is_cached_under_fallback_model(self):
         cache = FakeCache()
         generate = Recorder(*[llm.TransientError("HTTP 503")] * explain.TRANSIENT_ATTEMPTS)

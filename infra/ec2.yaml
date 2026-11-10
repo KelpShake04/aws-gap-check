@@ -122,12 +122,16 @@ Resources:
                 Resource:
                   - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gapcheck/gemini-api-key"
                   - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gapcheck/duckdns-token"
-              # 알림 메일: 확인된 보내는 주소 하나로만 보낼 수 있다
+              # 알림 메일: 보내는 주소는 하나로 고정한다. SES 샌드박스는 받는 주소의 ID에도
+              # ses:SendEmail 권한을 확인하므로 Resource는 identity/*로 열고 FromAddress로 막는다
               - !If
                 - HasMailFrom
                 - Effect: Allow
                   Action: ses:SendEmail
-                  Resource: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${MailFrom}"
+                  Resource: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+                  Condition:
+                    StringEquals:
+                      ses:FromAddress: !Ref MailFrom
                 - !Ref AWS::NoValue
 
   InstanceProfile:

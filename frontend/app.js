@@ -399,7 +399,7 @@ function costView(cost) {
       svg("text", { x: 0, y: 10, class: "tick" }, fmtMoney(peak)),
       svg("line", { x1: 0, x2: 600, y1: 16.5, y2: 16.5, class: "grid" }),
       cost.daily.map((d, i) => {
-        const height = Math.round((d.amount / peak) * 62);
+        const height = Math.max(0, Math.round((d.amount / peak) * 62));
         return svg("rect", { x: i * 20 + 2, y: 80 - height, width: 16, height, rx: 2,
           class: i === cost.daily.length - 1 ? "bar today" : "bar" }, svg("title", {}, `${d.date} ${fmtMoney(d.amount)}`));
       }),
