@@ -4,10 +4,12 @@ Description: >-
   고정된 SSM 배포 문서 하나만 EC2에 실행한다. 액세스 키를 쓰지 않고, 임의 명령은 실행할 수 없다.
 
 Parameters:
+  # OIDC 토큰 sub의 레포 부분. 이 레포는 immutable subject(소유자@ID/레포@ID)를 쓴다:
+  # gh api repos/<owner>/<repo>/actions/oidc/customization/sub 의 sub_claim_prefix에서 "repo:" 뒤
   GitHubRepo:
     Type: String
-    Default: KelpShake04/aws-gap-check
-    AllowedPattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    Default: KelpShake04@128560649/aws-gap-check@1436024882
+    AllowedPattern: "^[A-Za-z0-9_.-]+(@[0-9]+)?/[A-Za-z0-9_.-]+(@[0-9]+)?$"
   GitHubEnvironment:
     Type: String
     Default: production
