@@ -81,6 +81,7 @@ Resources:
                 - |
                   mkdir -p /opt/agc-backup
                   chmod 700 /opt/agc-backup
+                  rm -f /opt/agc-backup/gapcheck-*.sql  # 지난번 실패로 남은 압축 전 파일
                   dump=/opt/agc-backup/gapcheck-$(date -u +%Y%m%d-%H%M%S).sql
                   docker compose exec -T mysql sh -c 'mysqldump --single-transaction --no-tablespaces -ugapcheck -p"$MYSQL_PASSWORD" gapcheck' > "$dump"
                   gzip "$dump"

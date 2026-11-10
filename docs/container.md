@@ -128,7 +128,7 @@ main에 push된 커밋의 `test` 워크플로가 성공하면 `deploy` 워크플
   docker compose start app
   ```
   덤프에는 `DROP TABLE IF EXISTS`가 들어 있어 지금 데이터를 덮어쓴다.
-- **스냅샷으로 되살리기** (인스턴스를 잃었을 때): 새 EC2 스택을 만들고 → 스냅샷에서 같은 AZ에 볼륨 생성 → 새 인스턴스에 두 번째 디스크로 연결·마운트 → `docker compose stop` → 옛 디스크의 `/var/lib/docker/volumes/aws-gap-check_mysql-data/_data`를 새 위치에 복사(소유자 유지 `cp -a`) → 옛 `.env`의 `MYSQL_*` 값을 새 `.env`에 옮김 → `docker compose up -d`.
+- **스냅샷으로 되살리기** (인스턴스를 잃었을 때): 새 EC2 스택을 만들고 → 스냅샷에서 같은 AZ에 볼륨 생성 → 새 인스턴스에 두 번째 디스크로 연결·마운트 → `docker compose stop` → 옛 디스크의 `/var/lib/docker/volumes/aws-gap-check_mysql-data/_data`(DB)와 필요하면 `aws-gap-check_app-data/_data`(스캔 원본 결과, 30일 보존)를 새 위치에 복사(소유자 유지 `cp -a`) → 옛 `.env`의 `MYSQL_*` 값을 새 `.env`에 옮김 → `docker compose up -d`.
 
 ## 테스트
 
