@@ -678,21 +678,24 @@ async function scansView() {
 }
 
 // ---------- 리포트 ----------
-async function reportView(id, filterSeverity = "", filterPart = "") {
-  const { scan, findings } = await api.get(`/scans/${encodeURIComponent(id)}`);
+async function reportView(id, filterSeverity = "", filterPart = "", filterIsms = "") {
+  const { scan, findings, ismsPCovered } = await api.get(`/scans/${encodeURIComponent(id)}`);
   const running = !FINAL.includes(scan.status);
   // 자동 새로 고침 때 사용자가 펼쳐 둔 리소스 목록을 유지한다(같은 스캔일 때만)
   const opened = main.dataset.report === id
     ? new Set([...main.querySelectorAll("details[open]")].map((d) => d.dataset.check)) : new Set();
   const filtered = findings.filter((f) =>
     (!filterSeverity || f.severity === filterSeverity) &&
-    (!filterPart || partOf(f).key === filterPart));
+    (!filterPart || partOf(f).key === filterPart) &&
+    (!filterIsms || (f.ismsP || []).some((item) => item.id === filterIsms)));
   const activePartLabel = filterPart ? (PARTS.find(([, k]) => k === filterPart)?.[2] || filterPart.toUpperCase()) : "";
-  const filterNotice = (filterSeverity || filterPart)
+  const ismsItem = filterIsms ? findings.flatMap((f) => f.ismsP || []).find((item) => item.id === filterIsms) : null;
+  const activeIsmsLabel = filterIsms ? `ISMS-P ${filterIsms}${ismsItem ? ` ${ismsItem.name}` : ""}` : "";
+  const filterNotice = (filterSeverity || filterPart || filterIsms)
     ? h("div", { class: "filter-bar" },
       h("span", {},
         "필터 적용: ",
-        h("strong", {}, [filterSeverity ? SEVERITY[filterSeverity] || filterSeverity : "", activePartLabel].filter(Boolean).join(" · ")),
+        h("strong", {}, [filterSeverity ? SEVERITY[filterSeverity] || filterSeverity : "", activePartLabel, activeIsmsLabel].filter(Boolean).join(" · ")),
         ` (${filtered.length}개 항목)`),
       h("a", { href: `#/scans/${encodeURIComponent(scan.id)}` }, "전체 항목 보기"))
     : null;
@@ -704,6 +707,7 @@ async function reportView(id, filterSeverity = "", filterPart = "") {
     running ? h("p", { class: "muted" }, "진행 중입니다. 화면이 자동으로 새로 고쳐집니다.") : null,
     countsView(scan.id, scan.counts, filterSeverity),
     findings.length ? frequentPartsView(scan.id, findings, filterPart) : null,
+    findings.length ? ismsView(scan.id, findings, ismsPCovered, filterIsms) : null,
     findings.length ? priorityView(scan.summary, findings) : null,
     findings.length ? h("h2", {}, filterNotice ? `선택한 점검 항목 ${filtered.length}개 (전체 ${findings.length}개)` : `실패한 점검 항목 ${findings.length}개`) : null,
     filterNotice,
@@ -772,6 +776,62 @@ function frequentPartsView(scanId, findings, activePart) {
     })));
 }
 
+// 2.10.2(클라우드 보안)는 거의 모든 점검이 대응하는 포괄 항목이라 목록 맨 아래에 둔다
+const ISMS_BROAD = "2.10.2";
+
+function ismsCompare(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+  }
+  return 0;
+}
+
+// 실패한 점검 항목을 KISA ISMS-P 2023 통제 항목별로 묶는다(매핑은 Prowler에 포함된 파일)
+function ismsView(scanId, findings, covered, activeIsms) {
+  const byItem = new Map();
+  for (const f of findings) {
+    for (const item of f.ismsP || []) {
+      const cur = byItem.get(item.id) || { id: item.id, name: item.name, checks: 0, urgent: 0 };
+      cur.checks += 1;
+      if (f.severity === "critical" || f.severity === "high") cur.urgent += 1;
+      byItem.set(item.id, cur);
+    }
+  }
+  if (!byItem.size) return null;
+  const ranked = [...byItem.values()].sort((a, b) =>
+    (Number(a.id === ISMS_BROAD) - Number(b.id === ISMS_BROAD)) || (b.urgent - a.urgent) ||
+    (b.checks - a.checks) || ismsCompare(a.id, b.id));
+  // 포괄 항목(2.10.2)은 거의 모든 점검이 대응해 막대 기준에서 뺀다(그 막대는 100으로 꽉 찬다)
+  const max = Math.max(1, ...ranked.filter((item) => item.id !== ISMS_BROAD).map((item) => item.checks));
+  const sid = encodeURIComponent(scanId);
+  return h("section", { class: "card parts-card" },
+    h("h2", {}, "ISMS-P 통제 항목 관점"),
+    h("p", {},
+      covered ? `핵심 점검이 대응하는 ISMS-P 2023 통제 항목 ${Math.max(covered, byItem.size)}개 중 ` : "ISMS-P 2023 통제 항목 ",
+      h("strong", {}, `${byItem.size}개`),
+      "에서 미흡한 점검이 나왔습니다. 항목을 누르면 관련 점검만 모아 볼 수 있습니다."),
+    h("ul", { class: "parts-list" }, ranked.map((item) => {
+      const selected = activeIsms === item.id;
+      const href = selected ? `#/scans/${sid}` : `#/scans/${sid}?isms=${encodeURIComponent(item.id)}`;
+      return h("li", {},
+        h("a", { href, class: `part-row${selected ? " active" : ""}` },
+          h("div", { class: "part-head" },
+            h("span", { class: "part-name" },
+              h("strong", {}, `${item.id} ${item.name}`),
+              item.id === ISMS_BROAD ? h("span", { class: "small muted" }, " (포괄 항목)") : null,
+              item.urgent ? [" ", h("span", { class: "badge b-high" }, `치명·높음 ${item.urgent}`)] : null),
+            h("span", { class: "small muted" }, `미흡 점검 ${item.checks}개`)),
+          svg("svg", { class: "part-bar", viewBox: "0 0 100 6", preserveAspectRatio: "none", "aria-hidden": "true" },
+            svg("rect", { x: 0, y: 0, width: 100, height: 6, class: "track" }),
+            svg("rect", { x: 0, y: 0, width: Math.min(100, Math.max(4, Math.round((item.checks / max) * 100))), height: 6,
+              class: item.urgent ? "fill urgent" : "fill" }))));
+    })),
+    h("p", { class: "small muted" },
+      "매핑 출처: Prowler에 포함된 KISA ISMS-P 2023 매핑. 자동 점검으로 확인할 수 있는 기술 항목만 다루며 인증 심사를 대신하지 않습니다."));
+}
+
 function priorityView(summary, findings) {
   const titles = Object.fromEntries(findings.map((f) => [f.checkId, f.title || f.checkId]));
   if (summary && summary.top && summary.top.length) {
@@ -785,13 +845,22 @@ function priorityView(summary, findings) {
     h("ol", {}, findings.slice(0, 3).map((f) => h("li", {}, badge(f.severity, SEVERITY), " ", titles[f.checkId]))));
 }
 
+// 포괄 항목(2.10.2)은 모든 카드에 붙어 정보가 없으므로 칩에서 뺀다
+function ismsChips(items) {
+  const shown = (items || []).filter((item) => item.id !== ISMS_BROAD);
+  return shown.length
+    ? h("div", { class: "isms-chips" }, shown.map((item) => h("span", { class: "chip" }, `ISMS-P ${item.id} ${item.name}`)))
+    : null;
+}
+
 function findingCard(f, isOpen, codeOpen) {
   const shown = f.resources.length;
   return h("article", { class: `card finding sev-${f.severity}` },
     h("header", {},
       badge(f.severity, SEVERITY), " ",
       h("h3", {}, f.title || f.checkId),
-      h("div", { class: "small muted" }, `${f.checkId} · ${f.service} · 리소스 ${f.totalCount}개`)),
+      h("div", { class: "small muted" }, `${f.checkId} · ${f.service} · 리소스 ${f.totalCount}개`),
+      ismsChips(f.ismsP)),
     explanationView(f),
     h("details", { "data-check": f.checkId, open: isOpen },
       h("summary", {}, `영향받는 리소스 ${f.totalCount}개${shown < f.totalCount ? ` (처음 ${shown}개 표시)` : ""}`),
@@ -852,7 +921,8 @@ async function route() {
     if (hash.startsWith("#/scans/")) {
       const [rawId, rawQuery = ""] = hash.slice("#/scans/".length).split("?", 2);
       const params = new URLSearchParams(rawQuery);
-      await reportView(decodeURIComponent(rawId), params.get("severity") || "", params.get("part") || "");
+      await reportView(decodeURIComponent(rawId), params.get("severity") || "", params.get("part") || "",
+        params.get("isms") || "");
     } else if (hash === "#/scans") await scansView();
     else if (hash === "#/connections") await connectionsView();
     else if (hash === "#/password") passwordView();
