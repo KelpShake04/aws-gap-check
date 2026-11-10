@@ -21,7 +21,7 @@ from urllib.parse import urlsplit
 
 from . import auth, connections, scans
 from .common import ApiError, BadRequest, Forbidden, TooMany, Unauthorized, Unavailable, utcnow
-from .views import TEMPLATE_PATH, conn_view, finding_view, scan_view, setup_info
+from .views import TEMPLATE_PATH, conn_view, finding_view, isms_p_covered, scan_view, setup_info
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +186,8 @@ def get_scan(call):
     sub = call.user["id"]
     scan = scans.get(call.deps.store, sub, call.args[0])
     groups = call.deps.store.list_findings(sub, scan["id"])
-    return 200, {"scan": scan_view(scan), "findings": [finding_view(g) for g in groups]}
+    return 200, {"scan": scan_view(scan), "findings": [finding_view(g) for g in groups],
+                 "ismsPCovered": isms_p_covered()}
 
 
 def delete_scan(call):

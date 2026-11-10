@@ -16,6 +16,8 @@ SEVERITY_WEIGHTS = {"critical": 10, "high": 5, "medium": 2, "low": 1, "informati
 MAX_RESOURCES = 100
 # Prowler 메타데이터 Remediation.Code의 종류. 화면에 이 순서로 보인다(Other는 콘솔 절차)
 CODE_KINDS = ("Other", "CLI", "NativeIaC", "Terraform")
+# Prowler에 포함된 KISA ISMS-P 2023 매핑(한국어판). check ID → 통제 항목
+ISMS_P_FILE = "kisa_isms_p_2023_korean_aws.json"
 
 
 def scores(counts) -> dict | None:
@@ -100,11 +102,9 @@ def remediation_code(check_id, root: str | None = None) -> dict:
     """
     if not isinstance(check_id, str) or not re.fullmatch(r"[a-z0-9_]{1,120}", check_id):
         return {}
-    if root is None:
-        spec = importlib.util.find_spec("prowler")
-        if spec is None or not spec.origin:
-            return {}
-        root = os.path.dirname(spec.origin)
+    root = root or _prowler_root()
+    if not root:
+        return {}
     paths = glob.glob(os.path.join(glob.escape(root), "providers", "aws", "services", "*",
                                    check_id, f"{check_id}.metadata.json"))
     try:
@@ -116,6 +116,55 @@ def remediation_code(check_id, root: str | None = None) -> dict:
         return {}
     return {kind: _unfence(code[kind])[:4000] for kind in CODE_KINDS
             if isinstance(code.get(kind), str) and code[kind].strip()}
+
+
+def _prowler_root() -> str:
+    spec = importlib.util.find_spec("prowler")
+    return os.path.dirname(spec.origin) if spec is not None and spec.origin else ""
+
+
+@lru_cache(maxsize=4)
+def isms_p_index(root: str | None = None) -> dict:
+    """check ID → ISMS-P 통제 항목 [{id, name}] 목록. 없으면 {}.
+
+    Prowler에 들어 있는 KISA ISMS-P 2023(한국어) 매핑 파일을 읽는다. 결과는 공유 캐시라 바꾸지 않는다.
+    """
+    root = root or _prowler_root()
+    if not root:
+        return {}
+    try:
+        with open(os.path.join(root, "compliance", "aws", ISMS_P_FILE), encoding="utf-8") as f:
+            requirements = json.load(f)["Requirements"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+    index = {}
+    for req in requirements if isinstance(requirements, list) else []:
+        if not isinstance(req, dict):
+            continue
+        item_id, name = req.get("Id"), req.get("Name")
+        if not (isinstance(item_id, str) and re.fullmatch(r"[0-9]{1,2}(\.[0-9]{1,2}){1,3}", item_id)
+                and isinstance(name, str)):
+            continue
+        item = {"id": item_id, "name": name[:100]}
+        for check in req.get("Checks") or []:
+            if isinstance(check, str) and item not in index.setdefault(check, []):
+                index[check].append(item)
+    for items in index.values():
+        items.sort(key=lambda item: tuple(int(part) for part in item["id"].split(".")))
+    return index
+
+
+def isms_p(check_id, root: str | None = None) -> list:
+    """check가 대응하는 ISMS-P 통제 항목 목록(복사본)."""
+    if not isinstance(check_id, str):
+        return []
+    return [dict(item) for item in isms_p_index(root).get(check_id, [])]
+
+
+def isms_p_covered(check_ids, root: str | None = None) -> int:
+    """check 목록이 대응하는 ISMS-P 통제 항목 수(중복 제외)."""
+    index = isms_p_index(root)
+    return len({item["id"] for check in check_ids for item in index.get(check, [])})
 
 
 def _unfence(text: str) -> str:

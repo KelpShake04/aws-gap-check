@@ -83,6 +83,39 @@ class FindingsTest(unittest.TestCase):
             self.assertEqual(findings.remediation_code("../s3/s3_demo", root), {})
             self.assertEqual(findings.remediation_code(None, root), {})
 
+    def test_isms_p_from_prowler_compliance(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root, "compliance", "aws")
+            path.mkdir(parents=True)
+            (path / findings.ISMS_P_FILE).write_text(json.dumps({"Requirements": [
+                {"Id": "2.6.1", "Name": "네트워크 접근", "Checks": ["sg_open", "s3_public"]},
+                {"Id": "2.10.2", "Name": "클라우드 보안", "Checks": ["sg_open"]},
+                {"Id": "2.5.1", "Name": "사용자 계정 관리", "Checks": ["sg_open", "sg_open"]},
+                {"Id": "../x", "Name": "형식 오류", "Checks": ["sg_open"]},
+                {"Id": "1.1.1", "Name": "점검 없음"},
+                "깨진 항목",
+            ]}), encoding="utf-8")
+            self.assertEqual(findings.isms_p("sg_open", root), [
+                {"id": "2.5.1", "name": "사용자 계정 관리"},
+                {"id": "2.6.1", "name": "네트워크 접근"},
+                {"id": "2.10.2", "name": "클라우드 보안"}])
+            self.assertEqual(findings.isms_p("missing", root), [])
+            self.assertEqual(findings.isms_p(None, root), [])
+            self.assertEqual(findings.isms_p_covered(["sg_open", "s3_public", "missing"], root), 3)
+            # 돌려준 목록을 바꿔도 캐시는 그대로다
+            findings.isms_p("sg_open", root)[0]["name"] = "변경"
+            self.assertEqual(findings.isms_p("sg_open", root)[0]["name"], "사용자 계정 관리")
+        with tempfile.TemporaryDirectory() as empty:
+            self.assertEqual(findings.isms_p("sg_open", empty), [])
+
+    @unittest.skipUnless(importlib.util.find_spec("prowler"), "Prowler가 설치된 앱 이미지 안에서만 확인")
+    def test_core_checks_map_to_isms_p(self):
+        checks = json.loads((ROOT / "scanner" / "core-checks.json").read_text())["aws"]
+        for check in checks:
+            with self.subTest(check=check):
+                self.assertTrue(findings.isms_p(check))
+        self.assertGreaterEqual(findings.isms_p_covered(checks), 10)
+
     @unittest.skipUnless(importlib.util.find_spec("prowler"), "Prowler가 설치된 앱 이미지 안에서만 확인")
     def test_core_checks_have_official_code(self):
         for check in json.loads((ROOT / "scanner" / "core-checks.json").read_text())["aws"]:
