@@ -212,8 +212,8 @@ class ServerTest(unittest.TestCase):
         bob, _ = self.user("bob@example.com")
         self.assertEqual(bob.request("POST", f"/api/scans/{scan_id}/chat", question)[0], 404)
 
-        # 사용자당 10분에 10번(위의 200 한 번과 빈 질문 400 한 번이 세어졌다. 상태·CSRF 거절은 세지 않는다)
-        for _ in range(server.CHAT_LIMIT - 2):
+        # 사용자당 10분에 10번(위의 200 한 번만 세어졌다. 형식·상태·CSRF 거절은 세지 않는다)
+        for _ in range(server.CHAT_LIMIT - 1):
             self.assertEqual(alice.request("POST", f"/api/scans/{scan_id}/chat", question)[0], 200)
         self.assertEqual(alice.request("POST", f"/api/scans/{scan_id}/chat", question)[0], 429)
         self.clock.value += timedelta(seconds=server.CHAT_WINDOW_SECONDS + 1)
@@ -224,6 +224,18 @@ class ServerTest(unittest.TestCase):
         status, body = alice.request("POST", f"/api/scans/{scan_id}/chat", question)
         self.assertEqual(status, 503)
         self.assertNotIn("overloaded", json.dumps(body))
+
+        # 답을 기다리는 동안 같은 사용자의 두 번째 질문은 429(실패한 질문 뒤에는 다시 받는다)
+        inner = []
+
+        def slow(*args):
+            if not inner:
+                inner.append(alice.request("POST", f"/api/scans/{scan_id}/chat", question)[0])
+            return {"role": "model", "parts": [{"text": "ok"}]}
+        self.deps.chat = slow
+        self.assertEqual(alice.request("POST", f"/api/scans/{scan_id}/chat", question)[0], 200)
+        self.assertEqual(inner, [429])
+        self.assertEqual(alice.request("POST", f"/api/scans/{scan_id}/chat", question)[0], 200)
 
     # ---------- 연결·스캔 ----------
     def test_full_flow_and_user_isolation(self):

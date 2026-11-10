@@ -66,6 +66,7 @@ class Deps:
     chat: Any = None  # AI 상담: (system, contents, tools, allow_tools) -> 모델 content. Gemini 설정이 없으면 None
     chat_log: dict = field(default_factory=dict)  # 사용자별 최근 질문 시각(호출 제한)
     chat_lock: Any = field(default_factory=threading.Lock)
+    chat_busy: set = field(default_factory=set)  # 답을 기다리는 사용자(질문 하나가 Gemini를 최대 5번 부르므로 동시에 1개만)
 
 
 @dataclass
@@ -202,12 +203,16 @@ def chat_scan(call):
     if scan.get("status") != "DONE":
         raise BadRequest("완료된 스캔에서만 질문할 수 있습니다.")
     data = call.body()
+    agent.validate(data.get("question"), data.get("history"))  # 형식 오류는 횟수에 세지 않는다
     now = deps.now().timestamp()
     with deps.chat_lock:
+        if sub in deps.chat_busy:
+            raise TooMany("이전 질문에 답하는 중입니다. 답을 받은 뒤 다시 질문하세요.")
         recent = [t for t in deps.chat_log.get(sub, []) if now - t < CHAT_WINDOW_SECONDS]
         if len(recent) >= CHAT_LIMIT:
             raise TooMany("AI 상담은 10분에 10번까지 쓸 수 있습니다. 잠시 후 다시 시도하세요.")
         deps.chat_log[sub] = recent + [now]
+        deps.chat_busy.add(sub)
     try:
         return 200, agent.ask(deps.chat, deps.store, sub, scan, data.get("question"), data.get("history"))
     except llm.RateLimited:
@@ -215,6 +220,9 @@ def chat_scan(call):
     except llm.LLMError as err:
         logger.warning("chat failed: %s", type(err).__name__)
         raise Unavailable("AI 답변을 받지 못했습니다. 잠시 후 다시 시도하세요.") from None
+    finally:
+        with deps.chat_lock:
+            deps.chat_busy.discard(sub)
 
 
 def delete_scan(call):

@@ -145,7 +145,8 @@ def isms_p_requirements(root: str | None = None) -> tuple:
         if not (isinstance(item_id, str) and re.fullmatch(r"[0-9]{1,2}(\.[0-9]{1,2}){1,3}", item_id)
                 and isinstance(name, str)):
             continue
-        checks = tuple(dict.fromkeys(c for c in req.get("Checks") or [] if isinstance(c, str)))
+        raw = req.get("Checks")
+        checks = tuple(dict.fromkeys(c for c in raw if isinstance(c, str))) if isinstance(raw, list) else ()
         result.append({"id": item_id, "name": name[:100],
                        "description": _text(req.get("Description"), 1000), "checks": checks})
     return tuple(result)
@@ -175,7 +176,8 @@ def isms_p(check_id, root: str | None = None) -> list:
 def isms_p_covered(check_ids, root: str | None = None) -> int:
     """check 목록이 대응하는 ISMS-P 통제 항목 수(중복 제외)."""
     index = isms_p_index(root)
-    return len({item["id"] for check in check_ids for item in index.get(check, [])})
+    return len({item["id"] for check in check_ids if isinstance(check, str)
+                for item in index.get(check, [])})
 
 
 def _unfence(text: str) -> str:

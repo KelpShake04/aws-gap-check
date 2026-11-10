@@ -79,6 +79,12 @@ def ask(chat, store, sub: str, scan: dict, question, history=None, *, isms_root:
     return {"answer": "도구를 너무 많이 불러 답을 마치지 못했습니다. 질문을 좁혀 다시 시도하세요.", "toolCalls": calls}
 
 
+def validate(question, history) -> None:
+    """호출 횟수를 세기 전에 입력 형식만 검사한다(틀리면 BadRequest)."""
+    _question(question)
+    _history_contents(history)
+
+
 def _question(question) -> str:
     if not isinstance(question, str) or not question.strip():
         raise BadRequest("질문을 입력하세요.")
@@ -88,7 +94,11 @@ def _question(question) -> str:
 
 
 def _history_contents(history) -> list:
-    """이전 문답(글만). 사용자 자신의 기록이라 내용은 그대로 두고 형식과 길이만 제한한다."""
+    """이전 문답(글만). 사용자 자신의 기록이라 내용은 그대로 두고 형식과 길이만 제한한다.
+
+    model 턴도 클라이언트가 보낸 값이라 위조할 수 있다. 영향은 본인 세션·호출 제한 안이고
+    도구는 본인 스캔만 읽으므로 감수한다(서버에 대화를 저장하지 않는 대신).
+    """
     if history is None:
         return []
     if not isinstance(history, list):
