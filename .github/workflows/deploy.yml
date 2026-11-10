@@ -15,13 +15,13 @@ permissions:
 
 jobs:
   deploy:
-    # 설정(environment 변수)이 없으면 건너뛴다. 수동 실행도 main에서만 한다
+    # repo 변수(AWS_DEPLOY_ROLE_ARN)가 없으면 건너뛴다. job 수준 if는 environment 변수를 못 본다. 수동 실행도 main에서만 한다
     if: >-
       vars.AWS_DEPLOY_ROLE_ARN != '' && github.ref == 'refs/heads/main' &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     # Role 신뢰 정책이 이 environment 이름만 받는다(environment는 main 브랜치에서만 쓰게 설정)
     environment: production
     permissions:
@@ -53,8 +53,12 @@ jobs:
           # 진행 중 스캔 대기(최대 20분) + 빌드를 고려해 최대 28분 기다린다
           for _ in $(seq 168); do
             sleep 10
-            status=$(aws ssm get-command-invocation --command-id "$cid" --instance-id "$INSTANCE_ID" \
-              --query Status --output text 2>/dev/null || echo Pending)
+            # 보낸 직후의 InvocationDoesNotExist만 대기로 보고, 권한 오류 등은 바로 실패시킨다
+            if ! status=$(aws ssm get-command-invocation --command-id "$cid" --instance-id "$INSTANCE_ID" \
+              --query Status --output text 2>"$RUNNER_TEMP/err"); then
+              grep -q InvocationDoesNotExist "$RUNNER_TEMP/err" || { cat "$RUNNER_TEMP/err"; exit 1; }
+              status=Pending
+            fi
             case "$status" in Pending|InProgress|Delayed) continue ;; esac
             break
           done

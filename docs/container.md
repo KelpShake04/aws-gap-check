@@ -95,7 +95,9 @@ main에 push된 커밋의 `test` 워크플로가 성공하면 `deploy` 워크플
 
 - 자격 증명: GitHub OIDC로 `aws-gap-check-github-deploy` Role을 맡는다. 저장된 액세스 키가 없다. Role 신뢰 정책은 `repo:KelpShake04/aws-gap-check:environment:production`만 받고, GitHub environment `production`은 main 브랜치에서만 쓸 수 있다.
 - 권한: 그 인스턴스에 고정 SSM 문서 `agc-deploy` 하나만 실행(`ssm:SendCommand`) + 결과 조회. 문서 내용이 고정이라 워크플로가 탈취돼도 임의 명령은 보낼 수 없다.
-- 문서 동작: 진행 중 스캔(`DONE`·`FAILED`·`DELETED`가 아닌 것)이 끝날 때까지 최대 20분 기다림 → `git fetch origin main` + `git merge --ff-only` → `docker compose up -d --build` → 앱 응답 확인. 스캔이 계속 진행 중이면 배포를 중단한다.
+- 문서 동작: 잠금(배포 중복 방지) → `git fetch origin main` + `git merge --ff-only` → `docker compose build` → 진행 중 스캔(`DONE`·`FAILED`·`DELETED`가 아닌 것)이 끝날 때까지 최대 20분 기다림 → `docker compose up -d` → 앱 응답 확인. 스캔이 계속 진행 중이면 컨테이너를 바꾸지 않고 중단한다.
+- 배포되는 커밋은 실행 시점의 `origin/main` 최신 커밋이다. 대기 중에 들어온 push도 함께 나간다.
+- 승인: environment `production`에 required reviewer(관리자)가 있어, Actions 화면에서 승인해야 배포가 시작된다. write 권한 팀원이 main에 push해도 관리자 승인 없이는 서버에 반영되지 않는다.
 - 처음 한 번 설정(관리자 권한, 서울 리전):
   ```bash
   aws cloudformation deploy --region ap-northeast-2 --stack-name aws-gap-check-github-deploy \

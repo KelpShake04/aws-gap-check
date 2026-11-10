@@ -40,6 +40,8 @@ Resources:
       Name: agc-deploy
       DocumentType: Command
       DocumentFormat: YAML
+      # 이름이 고정이라 교체(Replace) 대신 새 버전으로 갱신한다
+      UpdateMethod: NewVersion
       Content:
         schemaVersion: "2.2"
         description: aws-gap-check main 최신 커밋 배포(진행 중 스캔이 끝날 때까지 대기)
@@ -51,9 +53,18 @@ Resources:
               runCommand:
                 - set -eu
                 - cd /opt/aws-gap-check
+                # 워크플로가 시간 초과 후 다시 실행돼도 인스턴스에서 배포가 겹치지 않게 한다
+                - exec 9>/run/agc-deploy.lock
+                - flock -n 9 || { echo "이미 배포가 진행 중입니다"; exit 1; }
+                # 배포 대상은 실행 시점의 origin/main 최신 커밋이다(워크플로를 부른 커밋과 다를 수 있음)
+                - git fetch --quiet origin main
+                - echo "before $(git rev-parse --short HEAD) after $(git rev-parse --short FETCH_HEAD)"
+                - git merge --ff-only --quiet FETCH_HEAD
+                # 빌드를 먼저 끝내 둬서 스캔 확인과 컨테이너 교체 사이의 틈을 줄인다(앱 코드는 이미지 안에 있어 실행 중인 앱엔 영향 없음)
+                - docker compose build --quiet app
                 - echo "SELECT COUNT(*) FROM scans WHERE status NOT IN ('DONE','FAILED','DELETED');" > /tmp/agc-busy.sql
                 - |
-                  busy() { docker compose exec -T mysql sh -c 'mysql -N -ugapcheck -p"$MYSQL_PASSWORD" gapcheck 2>/dev/null' < /tmp/agc-busy.sql; }
+                  busy() { docker compose exec -T mysql sh -c 'mysql -N -ugapcheck -p"$MYSQL_PASSWORD" gapcheck' < /tmp/agc-busy.sql; }
                   # 재시작하면 진행 중 스캔(QUEUED~EXPLAINING)이 끊기므로 끝날 때까지 최대 20분 기다린다
                   for i in $(seq 120); do
                     n=$(busy)
@@ -63,10 +74,7 @@ Resources:
                   done
                   [ "$(busy)" = "0" ] || { echo "진행 중 스캔이 끝나지 않아 배포를 중단합니다"; exit 1; }
                 - rm -f /tmp/agc-busy.sql
-                - git fetch --quiet origin main
-                - echo "before $(git rev-parse --short HEAD) after $(git rev-parse --short FETCH_HEAD)"
-                - git merge --ff-only --quiet FETCH_HEAD
-                - docker compose up -d --build
+                - docker compose up -d
                 - |
                   for i in $(seq 30); do
                     if docker compose exec -T app python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/', timeout=5)" 2>/dev/null; then
