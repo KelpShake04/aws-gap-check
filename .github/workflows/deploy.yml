@@ -2,7 +2,7 @@ name: deploy
 
 # main에 push된 커밋의 test가 성공하면 EC2에 배포한다(CD).
 # AWS 자격 증명은 OIDC로 받는다(저장된 액세스 키 없음). 맡는 Role은 infra/github-deploy.yaml이 만들고,
-# 고정된 SSM 문서(aws-gap-check-deploy) 하나만 실행할 수 있다. 문서가 진행 중 스캔이 끝날 때까지 기다린다.
+# 고정된 SSM 문서(agc-deploy) 하나만 실행할 수 있다. 문서가 진행 중 스캔이 끝날 때까지 기다린다.
 on:
   workflow_run:
     workflows: [test]
@@ -47,7 +47,7 @@ jobs:
         env:
           INSTANCE_ID: ${{ vars.DEPLOY_INSTANCE_ID }}
         run: |
-          cid=$(aws ssm send-command --document-name aws-gap-check-deploy --instance-ids "$INSTANCE_ID" \
+          cid=$(aws ssm send-command --document-name agc-deploy --instance-ids "$INSTANCE_ID" \
             --comment "github run ${{ github.run_id }}" --query Command.CommandId --output text)
           echo "command $cid"
           # 진행 중 스캔 대기(최대 20분) + 빌드를 고려해 최대 28분 기다린다

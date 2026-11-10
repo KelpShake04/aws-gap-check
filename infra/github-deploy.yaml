@@ -37,7 +37,7 @@ Resources:
   DeployDocument:
     Type: AWS::SSM::Document
     Properties:
-      Name: aws-gap-check-deploy
+      Name: agc-deploy
       DocumentType: Command
       DocumentFormat: YAML
       Content:
