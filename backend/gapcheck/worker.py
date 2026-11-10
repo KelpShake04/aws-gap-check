@@ -71,6 +71,7 @@ class Worker:
         self.raw_dir = raw_dir
         self.now = now
         self.wake = threading.Event()
+        self.recovered = threading.Event()  # 첫 스레드가 recover를 마치면 set, 나머지 스레드는 그때부터 일한다
 
     def raw_path(self, sub: str, scan_id: str) -> pathlib.Path:
         # 경로에 들어가는 값은 형식을 다시 확인한다(경로 조작 방지)
@@ -159,12 +160,16 @@ class Worker:
 
     def loop(self, housekeeping: bool = True) -> None:
         recovered, last_cleanup, last_schedule = False, None, None
+        if not housekeeping:
+            # 첫 스레드의 recover가 끝나기 전에 스캔을 잡으면 recover가 그 스캔을 '중단됨'으로 바꿔 버린다
+            self.recovered.wait()
         while True:
             try:
                 if housekeeping:
                     if not recovered:
                         self.recover()
                         recovered = True
+                        self.recovered.set()
                     if last_cleanup is None or time.monotonic() - last_cleanup > CLEANUP_INTERVAL:
                         self.cleanup()
                         last_cleanup = time.monotonic()

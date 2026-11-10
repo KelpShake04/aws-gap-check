@@ -483,6 +483,22 @@ class WorkerTest(unittest.TestCase):
             t.join(15)
         self.assertEqual(calls, [scan["id"]])
 
+    def test_extra_threads_wait_until_recover_done(self):
+        w = self.make_worker(None)
+        calls = []
+
+        def run_once():
+            calls.append(1)
+            raise SystemExit  # 스레드를 끝낸다(loop는 Exception만 잡는다)
+        w.run_once = run_once
+        t = threading.Thread(target=w.loop, kwargs={"housekeeping": False}, daemon=True)
+        t.start()
+        t.join(0.3)
+        self.assertEqual(calls, [])  # recover 전에는 스캔을 잡지 않는다
+        w.recovered.set()
+        t.join(5)
+        self.assertEqual(calls, [1])
+
     def test_only_first_thread_does_housekeeping(self):
         # 복구·정리·자동 점검을 두 스레드가 하면 자동 점검 스캔이 중복으로 생길 수 있다
         w = self.make_worker(None)
