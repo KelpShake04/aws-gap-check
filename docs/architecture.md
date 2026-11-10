@@ -32,7 +32,7 @@
                               └─ 성공 ──> deploy (environment production: 관리자 승인 필요)
                                            └─ OIDC(액세스 키 없음) ──> aws-gap-check-github-deploy Role
                                                 └─ ssm:SendCommand(고정 문서 agc-deploy만) ──> EC2
-                                                     잠금 → git pull → build → 진행 중 스캔 대기 → 교체 → 응답 확인
+                                                     잠금 → git pull → build → 진행 중 스캔 대기 → DB 덤프 → 교체 → 응답 확인
 ```
 
 AWS 쪽에서 필요한 것은 EC2 한 대, 인스턴스 Role, Security Group(80, 443), SSM 파라미터 2개(Gemini 키, DuckDNS 토큰)이고, 알림 메일을 쓰면 SES에서 확인된 이메일 주소가 더 필요하다. `infra/ec2.yaml` 하나로 만든다.

@@ -6,16 +6,18 @@ updates:
     directory: /
     schedule: { interval: weekly }
     open-pull-requests-limit: 3
-  # 워크플로의 action은 커밋 SHA로 고정돼 있다
+  # 워크플로의 action(태그 고정 actions/*, SHA 고정 configure-aws-credentials)
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
     open-pull-requests-limit: 3
-  # Dockerfile(prowler, python), compose.yaml(mysql, caddy)의 이미지 태그
+  # Dockerfile의 이미지 태그(prowler, python)
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly }
     open-pull-requests-limit: 3
+  # compose.yaml의 이미지 태그(mysql, caddy). test.yml의 서비스 이미지 mysql:8.4.9는 어느 항목도 올리지 않으므로
+  # compose.yaml의 mysql을 올릴 때 test.yml도 손으로 맞춘다
   - package-ecosystem: docker-compose
     directory: /
     schedule: { interval: weekly }
