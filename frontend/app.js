@@ -719,7 +719,7 @@ async function reportView(id, filterSeverity = "", filterPart = "", filterIsms =
       ? h("button", { type: "button", class: "danger", onclick: () => deleteScan(scan) }, "결과 삭제")
       : null);
   main.dataset.report = id;
-  if (running || findings.some((f) => f.explainSource === "pending")) pollTimer = setTimeout(route, 5000);
+  if (running) pollTimer = setTimeout(route, 5000);
 }
 
 function countsView(scanId, counts, activeSeverity) {
