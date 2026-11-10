@@ -8,10 +8,14 @@ CloudShell의 python3(3.9일 수 있음)에서도 돌아야 하므로 3.10 이�
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_TIMEOUT = 30
@@ -73,7 +77,7 @@ def generate_json(system: str, user: str, schema: dict, *, model: str, api_key: 
         headers={**_headers(api_key), "Content-Type": "application/json"},
         method="POST",
     )
-    return _parse_candidate(_send(request, api_key, timeout, opener))
+    return _parse_candidate(_logged_send(request, api_key, timeout, opener, model, "json"))
 
 
 def list_models(api_key: str, *, timeout: float = DEFAULT_TIMEOUT,
@@ -99,6 +103,29 @@ def list_models(api_key: str, *, timeout: float = DEFAULT_TIMEOUT,
 
 def _headers(api_key: str) -> dict:
     return {"x-goog-api-key": api_key}
+
+
+def _logged_send(request, api_key: str, timeout: float, opener, model: str, purpose: str) -> dict:
+    """_send에 호출 메타데이터 로그를 붙인다. 프롬프트·응답 내용은 남기지 않는다(스캔 결과가 들어 있다)."""
+    started = time.monotonic()
+    payload, status = {}, "ok"
+    try:
+        payload = _send(request, api_key, timeout, opener)
+        return payload
+    except LLMError as err:
+        status = type(err).__name__
+        raise
+    finally:
+        # 로그가 응답 형식 오류를 가리지 않게 모양이 이상하면 빈 값으로 본다(형식 검사는 호출한 쪽이 한다)
+        info = payload if isinstance(payload, dict) else {}
+        usage = info.get("usageMetadata") if isinstance(info.get("usageMetadata"), dict) else {}
+        candidates = info.get("candidates") if isinstance(info.get("candidates"), list) else []
+        content = candidates[0].get("content") if candidates and isinstance(candidates[0], dict) else None
+        parts = content.get("parts") if isinstance(content, dict) and isinstance(content.get("parts"), list) else []
+        tool_calls = sum(1 for part in parts if isinstance(part, dict) and "functionCall" in part)
+        logger.info("gemini %s model=%s status=%s ms=%d in=%s out=%s think=%s tools=%d", purpose, model, status,
+                    (time.monotonic() - started) * 1000, usage.get("promptTokenCount", "-"),
+                    usage.get("candidatesTokenCount", "-"), usage.get("thoughtsTokenCount", "-"), tool_calls)
 
 
 def _send(request, api_key: str, timeout: float, opener) -> dict:
@@ -145,7 +172,7 @@ def generate_chat(system: str, contents: list, tools: list, *, model: str, api_k
         headers={**_headers(api_key), "Content-Type": "application/json"},
         method="POST",
     )
-    content = _checked_candidate(_send(request, api_key, timeout, opener)).get("content")
+    content = _checked_candidate(_logged_send(request, api_key, timeout, opener, model, "chat")).get("content")
     if not isinstance(content, dict) or not isinstance(content.get("parts"), list):
         raise InvalidResponse("응답에 content가 없음")
     return {"role": "model", "parts": content["parts"]}

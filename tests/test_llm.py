@@ -247,5 +247,38 @@ class GenerateChatTest(unittest.TestCase):
             self.chat({"candidates": [{"finishReason": "SAFETY"}]})
 
 
+class UsageLogTest(unittest.TestCase):
+    """호출마다 메타데이터(모델·시간·토큰·도구 호출 수)만 남기고 프롬프트·응답 내용과 키는 남기지 않는다."""
+
+    def test_json_call_logs_usage_without_content(self):
+        payload = ok_payload({"summary": "secret-answer"})
+        payload["usageMetadata"] = {"promptTokenCount": 120, "candidatesTokenCount": 45, "thoughtsTokenCount": 7}
+        with self.assertLogs("gapcheck.llm", "INFO") as logs:
+            call(FakeOpener(payload))
+        line = "\n".join(logs.output)
+        for part in ("gemini json", "model=gemini-test-flash", "status=ok", "ms=", "in=120", "out=45",
+                     "think=7", "tools=0"):
+            self.assertIn(part, line)
+        for leaked in ("system text", "user text", "secret-answer", KEY):
+            self.assertNotIn(leaked, line)
+
+    def test_chat_call_counts_tool_calls(self):
+        payload = {"candidates": [{"finishReason": "STOP", "content": {"role": "model", "parts": [
+            {"functionCall": {"name": "list_findings", "args": {}}},
+            {"functionCall": {"name": "search_isms_p", "args": {"keyword": "SSH"}}}]}}]}
+        with self.assertLogs("gapcheck.llm", "INFO") as logs:
+            llm.generate_chat("system text", [{"role": "user", "parts": [{"text": "q"}]}], [],
+                              model="gemini-test-flash", api_key=KEY, opener=FakeOpener(payload))
+        self.assertIn("gemini chat", logs.output[0])
+        self.assertIn("tools=2", logs.output[0])
+        self.assertIn("in=- out=-", logs.output[0])  # usageMetadata가 없으면 '-'
+
+    def test_failed_call_logs_error_class(self):
+        with self.assertLogs("gapcheck.llm", "INFO") as logs, self.assertRaises(llm.RateLimited):
+            call(FakeOpener(error=http_error(429, {"error": {"message": "quota"}})))
+        self.assertIn("status=RateLimited", logs.output[0])
+        self.assertNotIn(KEY, logs.output[0])
+
+
 if __name__ == "__main__":
     unittest.main()
