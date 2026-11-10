@@ -256,7 +256,7 @@ class UsageLogTest(unittest.TestCase):
         with self.assertLogs("gapcheck.llm", "INFO") as logs:
             call(FakeOpener(payload))
         line = "\n".join(logs.output)
-        for part in ("gemini json", "model=gemini-test-flash", "status=ok", "ms=", "in=120", "out=45",
+        for part in ("gemini json", "model=gemini-test-flash", "status=ok", "finish=STOP", "ms=", "in=120", "out=45",
                      "think=7", "tools=0"):
             self.assertIn(part, line)
         for leaked in ("system text", "user text", "secret-answer", KEY):
@@ -277,6 +277,7 @@ class UsageLogTest(unittest.TestCase):
         with self.assertLogs("gapcheck.llm", "INFO") as logs, self.assertRaises(llm.RateLimited):
             call(FakeOpener(error=http_error(429, {"error": {"message": "quota"}})))
         self.assertIn("status=RateLimited", logs.output[0])
+        self.assertIn("finish=-", logs.output[0])
         self.assertNotIn(KEY, logs.output[0])
 
 

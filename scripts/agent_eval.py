@@ -16,7 +16,8 @@ import re
 import sys
 import time
 
-ISMS_ID = re.compile(r"(?<![\d.])2\.\d{1,2}\.\d{1,2}(?![\d.])")
+ISMS_ID = re.compile(r"(?<![\d.])2\.\d{1,2}\.\d{1,2}(?!\.?\d)")  # 문장 끝 마침표는 허용, 버전 2.6.1.4는 제외
+BROAD = "2.10.2"  # 클라우드 보안: 거의 모든 점검이 걸리는 포괄 항목
 REMEDIATION_TOOLS = {"get_remediation_code", "get_check_detail"}
 
 
@@ -38,17 +39,19 @@ def make_questions(findings_list: list, isms_lookup) -> list:
     return questions
 
 
-def judge(kind: str, expected, answer: str, tool_names: list) -> str:
+def judge(kind: str, expected, answer: str, tool_names: list, valid_ids=None) -> str:
+    """valid_ids: 실제 ISMS-P 항목 번호 집합. 주면 'Python 2.7.18' 같은 숫자는 번호로 보지 않는다."""
     if kind == "manual":
         return "확인 필요"
     if not tool_names:
         return "실패(도구 없이 답함)"
     if kind == "isms":
-        found = isms_ids(answer)
-        if not found & expected:
-            return f"실패(정답 {', '.join(sorted(expected))} 없음)"
-        extra = found - expected - {"2.10.2"}  # 2.10.2 클라우드 보안은 거의 모든 점검이 걸리는 포괄 항목
-        return f"부분(근거 없는 번호 {', '.join(sorted(extra))})" if extra else "통과"
+        found = isms_ids(answer) & valid_ids if valid_ids else isms_ids(answer)
+        core = expected - {BROAD} or expected  # 포괄 항목만 말한 답은 정답으로 치지 않는다
+        if not found & core:
+            return f"실패(정답 {', '.join(sorted(core))} 없음)"
+        extra = found - expected - {BROAD}
+        return f"부분(정답 외 번호 {', '.join(sorted(extra))})" if extra else "통과"
     return "통과" if expected & set(tool_names) else f"실패({'/'.join(sorted(expected))} 안 씀)"
 
 
@@ -76,18 +79,20 @@ def main(argv=None) -> int:
         return 1
 
     groups = store.list_findings(user["id"], scan["id"])
-    rows, passed, graded, total_seconds = [], 0, 0, 0.0
+    valid_ids = {item["id"] for item in findings.isms_p_requirements()}
+    rows, passed, graded, errors, total_seconds = [], 0, 0, 0, 0.0
     for n, (kind, question, expected) in enumerate(make_questions(groups, findings.isms_p), 1):
         started = time.monotonic()
         try:
-            result = agent.ask(chat, store, user["id"], scan, question)
+            result = ask_once(agent, chat, store, user["id"], scan, question)
             answer, tools = result["answer"], [c["name"] for c in result["toolCalls"]]
-        except Exception as err:  # 한 질문이 실패해도 나머지는 평가한다
-            answer, tools = f"(오류 {type(err).__name__})", []
+            verdict = judge(kind, expected, answer, tools, valid_ids)
+        except Exception as err:  # 호출 오류는 품질 채점에서 빼고 따로 센다(한 질문 오류로 나머지를 버리지 않게)
+            answer, tools, verdict = "", [], f"오류({type(err).__name__})"
+            errors += 1
         seconds = time.monotonic() - started
         total_seconds += seconds
-        verdict = judge(kind, expected, answer, tools)
-        if kind != "manual":
+        if kind != "manual" and not verdict.startswith("오류"):
             graded += 1
             passed += verdict == "통과"
         preview = " ".join(answer.split())[:60] if kind == "manual" else ""
@@ -95,8 +100,18 @@ def main(argv=None) -> int:
 
     print("| # | 유형 | 질문 | 도구 | 판정 | 초 | 답(범위 밖만) |\n|---|---|---|---|---|---|---|")
     print("\n".join(rows))
-    print(f"\n자동 채점 {passed}/{graded} 통과, 평균 {total_seconds / max(1, len(rows)):.1f}초")
-    return 0
+    print(f"\n자동 채점 {passed}/{graded} 통과, 호출 오류 {errors}건, 평균 {total_seconds / max(1, len(rows)):.1f}초")
+    return 1 if errors else 0
+
+
+def ask_once(agent, chat, store, sub: str, scan: dict, question: str) -> dict:
+    """한도(429)에 걸리면 서버가 알려 준 시간(최대 60초)만큼 기다려 한 번 더 묻는다."""
+    from gapcheck import llm
+    try:
+        return agent.ask(chat, store, sub, scan, question)
+    except llm.RateLimited as err:
+        time.sleep(min(err.retry_after or 20, 60))
+        return agent.ask(chat, store, sub, scan, question)
 
 
 if __name__ == "__main__":

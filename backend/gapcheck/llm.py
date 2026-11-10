@@ -112,7 +112,7 @@ def _logged_send(request, api_key: str, timeout: float, opener, model: str, purp
     try:
         payload = _send(request, api_key, timeout, opener)
         return payload
-    except LLMError as err:
+    except Exception as err:
         status = type(err).__name__
         raise
     finally:
@@ -120,11 +120,14 @@ def _logged_send(request, api_key: str, timeout: float, opener, model: str, purp
         info = payload if isinstance(payload, dict) else {}
         usage = info.get("usageMetadata") if isinstance(info.get("usageMetadata"), dict) else {}
         candidates = info.get("candidates") if isinstance(info.get("candidates"), list) else []
-        content = candidates[0].get("content") if candidates and isinstance(candidates[0], dict) else None
+        first = candidates[0] if candidates and isinstance(candidates[0], dict) else {}
+        content = first.get("content")
+        # SAFETY·MAX_TOKENS처럼 응답은 왔지만 쓸 수 없는 경우를 구분한다(값은 API enum만 받는다)
+        finish = first.get("finishReason") if re.fullmatch(r"[A-Z_]{1,40}", str(first.get("finishReason"))) else "-"
         parts = content.get("parts") if isinstance(content, dict) and isinstance(content.get("parts"), list) else []
         tool_calls = sum(1 for part in parts if isinstance(part, dict) and "functionCall" in part)
-        logger.info("gemini %s model=%s status=%s ms=%d in=%s out=%s think=%s tools=%d", purpose, model, status,
-                    (time.monotonic() - started) * 1000, usage.get("promptTokenCount", "-"),
+        logger.info("gemini %s model=%s status=%s finish=%s ms=%d in=%s out=%s think=%s tools=%d", purpose, model,
+                    status, finish, (time.monotonic() - started) * 1000, usage.get("promptTokenCount", "-"),
                     usage.get("candidatesTokenCount", "-"), usage.get("thoughtsTokenCount", "-"), tool_calls)
 
 
