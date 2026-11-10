@@ -1,0 +1,18 @@
+# 운영 사이트가 응답하는지 30분마다 확인한다. 실패하면 워크플로가 실패로 끝나고 GitHub이 메일로 알린다.
+# public 레포라 Actions 비용이 없다. 사이트를 일부러 꺼 둘 때는 Actions 화면에서 이 워크플로를 비활성화한다.
+name: uptime
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Site responds
+        run: curl -fsS -o /dev/null -w "%{http_code}\n" --retry 3 --retry-delay 10 --retry-all-errors --max-time 20 https://agc-kelp04.duckdns.org/
