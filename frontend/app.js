@@ -709,6 +709,7 @@ async function reportView(id, filterSeverity = "", filterPart = "", filterIsms =
     findings.length ? frequentPartsView(scan.id, findings, filterPart) : null,
     findings.length ? ismsView(scan.id, findings, ismsPCovered, filterIsms) : null,
     findings.length ? priorityView(scan.summary, findings) : null,
+    scan.status === "DONE" && findings.length ? chatView(scan) : null,
     findings.length ? h("h2", {}, filterNotice ? `선택한 점검 항목 ${filtered.length}개 (전체 ${findings.length}개)` : `실패한 점검 항목 ${findings.length}개`) : null,
     filterNotice,
     filtered.map((f) => findingCard(f, opened.has(f.checkId), opened.has(`${f.checkId}#code`))),
@@ -774,6 +775,71 @@ function frequentPartsView(scanId, findings, activePart) {
             svg("rect", { x: 0, y: 0, width: 100, height: 6, class: "track" }),
             svg("rect", { x: 0, y: 0, width: pct, height: 6, class: item.urgent ? "fill urgent" : "fill" }))));
     })));
+}
+
+// AI 상담 대화. 리포트를 다시 그려도(자동 새로 고침) 같은 스캔의 대화는 유지한다
+const chatTurns = new Map();
+// 답을 기다리는 스캔. 5초 폴링으로 화면이 다시 그려져도 중복 전송하지 않게 모듈 수준에 둔다
+const chatBusy = new Set();
+const TOOL_LABEL = {
+  list_findings: "실패 항목 목록", get_check_detail: "항목 상세", get_remediation_code: "공식 수정 예시",
+  search_isms_p: "ISMS-P 검색", get_score_history: "점수 추이",
+};
+
+function chatView(scan) {
+  const turns = chatTurns.get(scan.id) || [];
+  chatTurns.set(scan.id, turns);
+  const log = h("div", { class: "chat-log", "aria-live": "polite" });
+  const draw = () => log.replaceChildren(...turns.map((t) => h("div", { class: `chat-msg ${t.role}${t.error ? " error" : ""}` },
+    t.tools && t.tools.length
+      ? h("div", { class: "chat-tools small muted" }, "도구 사용: ",
+        t.tools.map((c, i) => [i ? " → " : "", h("code", {}, Object.hasOwn(TOOL_LABEL, c.name) ? TOOL_LABEL[c.name] : c.name),
+          c.args && c.args.check_id ? ` (${c.args.check_id})` : c.args && c.args.query ? ` ("${c.args.query}")` : ""]))
+      : null,
+    h("p", {}, t.text))));
+  const input = h("input", { type: "text", maxlength: 500, required: true, "aria-label": "AI에게 질문",
+    placeholder: "예: 가장 먼저 고칠 것은? SSH 열린 건 어떻게 막아? ISMS-P 몇 번 항목이야?" });
+  const busy = chatBusy.has(scan.id);
+  const button = h("button", { type: "submit", disabled: busy }, busy ? "도구로 확인 중…" : "질문");
+  const form = h("form", {
+    class: "chat-form",
+    onsubmit: async (event) => {
+      event.preventDefault();
+      const question = input.value.trim();
+      if (!question || button.disabled || chatBusy.has(scan.id)) return;
+      // 서버 본문 한도(16KB) 안에 들도록 최근 4턴만, 턴마다 1000자로 자른다(한글 1자 = 3바이트)
+      const history = turns.filter((t) => !t.error && !t.failed).slice(-4)
+        .map((t) => ({ role: t.role, text: t.text.slice(0, 1000) }));
+      while (history.length && history[0].role !== "user") history.shift();
+      const asked = { role: "user", text: question };
+      turns.push(asked);
+      chatBusy.add(scan.id);
+      input.value = "";
+      button.disabled = true;
+      button.textContent = "도구로 확인 중…";
+      draw();
+      try {
+        const result = await api.post(`/scans/${encodeURIComponent(scan.id)}/chat`, { question, history });
+        turns.push({ role: "model", text: result.answer, tools: result.toolCalls });
+      } catch (err) {
+        asked.failed = true;  // 답을 못 받은 질문은 다음 history에서 뺀다(user 턴 연속 방지)
+        if (err.status === 401) return;
+        turns.push({ role: "model", text: err.message || "답변을 받지 못했습니다.", error: true });
+      } finally {
+        chatBusy.delete(scan.id);
+        button.disabled = false;
+        button.textContent = "질문";
+        draw();
+      }
+    },
+  }, input, button);
+  draw();
+  return h("section", { class: "card chat-card" },
+    h("h2", {}, "AI 보안 상담 (Agent)"),
+    h("p", { class: "small muted" },
+      "Gemini가 이 스캔의 점검 결과·공식 수정 예시·ISMS-P 기준을 도구로 찾아 보고 답합니다. ",
+      "리소스 이름과 계정 ID는 AI에 보내지 않고, 아무것도 자동으로 고치지 않습니다."),
+    log, form);
 }
 
 // 2.10.2(클라우드 보안)는 거의 모든 점검이 대응하는 포괄 항목이라 목록 맨 아래에 둔다

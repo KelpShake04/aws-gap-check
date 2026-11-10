@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from . import auth, connections, scans
+from . import agent, auth, connections, llm, scans
 from .common import ApiError, BadRequest, Forbidden, TooMany, Unauthorized, Unavailable, utcnow
 from .views import TEMPLATE_PATH, conn_view, finding_view, isms_p_covered, scan_view, setup_info
 
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 MAX_BODY_BYTES = 16 * 1024
 MAIL_TEST_SECONDS = 60
+CHAT_LIMIT, CHAT_WINDOW_SECONDS = 10, 600  # AI 상담은 사용자당 10분에 10번(Gemini 한도·비용 보호)
 COOKIE = "agc_session"
 CSRF_HEADER, CSRF_VALUE = "X-Requested-With", "gapcheck"
 REGION = "ap-northeast-2"
@@ -62,6 +63,10 @@ class Deps:
     notifier: Any = None  # send_test(email). 메일 설정이 없으면 None
     mail_sent: dict = field(default_factory=dict)  # 사용자별 마지막 테스트 메일 시각
     mail_lock: Any = field(default_factory=threading.Lock)  # mail_sent 확인·기록을 한 번에
+    chat: Any = None  # AI 상담: (system, contents, tools, allow_tools) -> 모델 content. Gemini 설정이 없으면 None
+    chat_log: dict = field(default_factory=dict)  # 사용자별 최근 질문 시각(호출 제한)
+    chat_lock: Any = field(default_factory=threading.Lock)
+    chat_busy: set = field(default_factory=set)  # 답을 기다리는 사용자(질문 하나가 Gemini를 최대 5번 부르므로 동시에 1개만)
 
 
 @dataclass
@@ -190,6 +195,36 @@ def get_scan(call):
                  "ismsPCovered": isms_p_covered()}
 
 
+def chat_scan(call):
+    deps, sub = call.deps, call.user["id"]
+    if deps.chat is None:
+        raise Unavailable("AI 상담을 쓸 수 없습니다(Gemini 설정 없음).")
+    scan = scans.get(deps.store, sub, call.args[0])
+    if scan.get("status") != "DONE":
+        raise BadRequest("완료된 스캔에서만 질문할 수 있습니다.")
+    data = call.body()
+    agent.validate(data.get("question"), data.get("history"))  # 형식 오류는 횟수에 세지 않는다
+    now = deps.now().timestamp()
+    with deps.chat_lock:
+        if sub in deps.chat_busy:
+            raise TooMany("이전 질문에 답하는 중입니다. 답을 받은 뒤 다시 질문하세요.")
+        recent = [t for t in deps.chat_log.get(sub, []) if now - t < CHAT_WINDOW_SECONDS]
+        if len(recent) >= CHAT_LIMIT:
+            raise TooMany("AI 상담은 10분에 10번까지 쓸 수 있습니다. 잠시 후 다시 시도하세요.")
+        deps.chat_log[sub] = recent + [now]
+        deps.chat_busy.add(sub)
+    try:
+        return 200, agent.ask(deps.chat, deps.store, sub, scan, data.get("question"), data.get("history"))
+    except llm.RateLimited:
+        raise TooMany("AI 사용량이 많습니다. 잠시 후 다시 시도하세요.") from None
+    except llm.LLMError as err:
+        logger.warning("chat failed: %s", type(err).__name__)
+        raise Unavailable("AI 답변을 받지 못했습니다. 잠시 후 다시 시도하세요.") from None
+    finally:
+        with deps.chat_lock:
+            deps.chat_busy.discard(sub)
+
+
 def delete_scan(call):
     sub, scan_id = call.user["id"], call.args[0]
     scans.discard(call.deps.store, sub, scan_id, now=call.deps.now(),
@@ -215,6 +250,7 @@ ROUTES = [
     ("POST", r"/api/scans", start_scan, "user"),
     ("GET", r"/api/scans/([^/]+)", get_scan, "user"),
     ("DELETE", r"/api/scans/([^/]+)", delete_scan, "user"),
+    ("POST", r"/api/scans/([^/]+)/chat", chat_scan, "user"),
 ]
 
 
