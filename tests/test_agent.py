@@ -98,7 +98,8 @@ class AgentTest(unittest.TestCase):
         chat = ScriptedChat(*[call("list_findings")] * agent.MAX_STEPS, text("정리한 답"))
         result = self.ask(chat)
         self.assertEqual(result["answer"], "정리한 답")
-        self.assertEqual([allow for _, allow in chat.requests], [True] * agent.MAX_STEPS + [False])
+        self.assertEqual([allow for _, allow in chat.requests],
+                         ["required"] + [True] * (agent.MAX_STEPS - 1) + [False])
         # 도구를 막았는데도 또 부르면 더 돌지 않고 끝낸다
         chat = ScriptedChat(*[call("list_findings")] * (agent.MAX_STEPS + 1))
         self.assertIn("질문을 좁혀", self.ask(chat)["answer"])
@@ -118,6 +119,15 @@ class AgentTest(unittest.TestCase):
         result = chat.requests[1][0][-1]["parts"][0]["functionResponse"]["response"]["result"]
         self.assertEqual([s["created_at"] for s in result["scans"]], ["2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z"])
         self.assertEqual(result["scans"][0]["security"], 100)
+
+    def test_list_findings_gives_isms_p_names(self):
+        original = findings.isms_p
+        findings.isms_p = lambda check_id, root=None: [{"id": "2.6.1", "name": "네트워크 접근"}]
+        self.addCleanup(setattr, findings, "isms_p", original)
+        chat = ScriptedChat(call("list_findings"), text("ok"))
+        self.ask(chat)
+        result = chat.requests[1][0][-1]["parts"][0]["functionResponse"]["response"]["result"]
+        self.assertEqual(result["failed_checks"][0]["isms_p"], [{"id": "2.6.1", "name": "네트워크 접근"}])
 
     def test_search_isms_p_uses_requirements(self):
         reqs = ({"id": "2.6.1", "name": "네트워크 접근", "description": "네트워크 접근 통제",

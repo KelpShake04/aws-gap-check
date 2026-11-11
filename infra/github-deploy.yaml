@@ -76,6 +76,17 @@ Resources:
                   done
                   [ "$(busy)" = "0" ] || { echo "진행 중 스캔이 끝나지 않아 배포를 중단합니다"; exit 1; }
                 - rm -f /tmp/agc-busy.sql
+                # 컨테이너를 바꾸기 직전 DB를 덤프한다(잘못된 배포·스키마 실수 대비, 최근 7개 보관).
+                # 파일로 먼저 받아 덤프가 실패하면 set -e로 배포를 멈춘다(파이프면 실패가 gzip에 가려진다)
+                - |
+                  mkdir -p /opt/agc-backup
+                  chmod 700 /opt/agc-backup
+                  rm -f /opt/agc-backup/gapcheck-*.sql  # 지난번 실패로 남은 압축 전 파일
+                  dump=/opt/agc-backup/gapcheck-$(date -u +%Y%m%d-%H%M%S).sql
+                  docker compose exec -T mysql sh -c 'mysqldump --single-transaction --no-tablespaces -ugapcheck -p"$MYSQL_PASSWORD" gapcheck' > "$dump"
+                  gzip "$dump"
+                  ls -1t /opt/agc-backup/gapcheck-*.sql.gz | tail -n +8 | xargs -r rm -f
+                  echo "backup $(basename "$dump").gz"
                 - docker compose up -d
                 - |
                   for i in $(seq 30); do

@@ -172,6 +172,17 @@ class CoreChecksTest(unittest.TestCase):
         for check in checks:
             self.assertRegex(check, r"^[a-z0-9_]+$")
 
+    def test_isms_p_coverage_checks_present(self):
+        # Prowler 5.47.0 ISMS-P 매핑 기준으로 통제 항목 14개 → 24개를 덮게 추가한 점검
+        checks = set(json.loads((ROOT / "scanner" / "core-checks.json").read_text())["aws"])
+        for check in ("s3_bucket_object_versioning", "cloudwatch_log_metric_filter_root_usage",
+                      "inspector2_is_enabled", "guardduty_ec2_malware_protection_enabled",
+                      "iam_support_role_created", "ssm_managed_compliant_patching",
+                      "rds_instance_deletion_protection",
+                      "ec2_instance_port_elasticsearch_kibana_exposed_to_internet",
+                      "rds_instance_copy_tags_to_snapshots"):
+            self.assertIn(check, checks)
+
 
 if __name__ == "__main__":
     unittest.main()

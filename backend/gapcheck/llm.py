@@ -128,7 +128,8 @@ def generate_chat(system: str, contents: list, tools: list, *, model: str, api_k
 
     Gemini 3 계열은 functionCall part의 thoughtSignature를 다음 요청에 그대로 돌려줘야 하므로(없으면 400)
     호출하는 쪽은 이 content를 고치지 않고 대화 기록에 붙인다. allow_tools=False면 도구 선언은 둔 채
-    도구 호출을 막는다(기록에 functionCall이 있어도 마지막 답을 글로 받기 위해).
+    도구 호출을 막는다(기록에 functionCall이 있어도 마지막 답을 글로 받기 위해). "required"면 도구를
+    반드시 하나 이상 부르게 한다(기억으로 답하지 않게).
     """
     model = model[len("models/"):] if model.startswith("models/") else model
     body = {
@@ -137,8 +138,9 @@ def generate_chat(system: str, contents: list, tools: list, *, model: str, api_k
         "tools": tools,
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": max_output_tokens},
     }
-    if not allow_tools:
-        body["toolConfig"] = {"functionCallingConfig": {"mode": "NONE"}}
+    mode = "ANY" if allow_tools == "required" else None if allow_tools else "NONE"
+    if mode:
+        body["toolConfig"] = {"functionCallingConfig": {"mode": mode}}
     request = urllib.request.Request(
         f"{API_BASE}/models/{urllib.parse.quote(model)}:generateContent",
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),

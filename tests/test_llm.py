@@ -240,6 +240,11 @@ class GenerateChatTest(unittest.TestCase):
         self.assertEqual(body["toolConfig"], {"functionCallingConfig": {"mode": "NONE"}})
         self.assertEqual(body["tools"], self.TOOLS)
 
+    def test_allow_tools_required_forces_a_call(self):
+        _, body, _ = self.chat({"candidates": [{"content": {"parts": [{"text": "답"}]}, "finishReason": "STOP"}]},
+                               allow_tools="required")
+        self.assertEqual(body["toolConfig"], {"functionCallingConfig": {"mode": "ANY"}})
+
     def test_missing_content_and_blocked(self):
         with self.assertRaises(llm.InvalidResponse):
             self.chat({"candidates": [{"finishReason": "STOP"}]})

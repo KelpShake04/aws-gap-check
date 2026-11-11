@@ -1,0 +1,63 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  aws-gap-check daily EBS snapshots (Data Lifecycle Manager). Separate from the EC2 stack so that
+  applying it never touches or replaces the instance.
+
+# 운영 EC2의 루트 볼륨은 DeleteOnTermination이고 MySQL 데이터(Docker 볼륨)가 그 안에 있다.
+# 인스턴스가 교체·삭제되면 계정·스캔 기록이 사라지므로 매일 스냅샷을 남긴다.
+# 스냅샷은 실행 중에 찍는 crash-consistent 사본이다(InnoDB는 다음 시작 때 복구한다). 배포 직전에는
+# agc-deploy 문서가 mysqldump도 남긴다. 복원 절차는 docs/container.md "백업과 복원".
+# 비용: 사용 중인 블록만 증분 저장(현재 약 15GB) → 월 $1 안팎.
+
+Parameters:
+  InstanceNameTag:
+    Type: String
+    Description: 스냅샷을 찍을 인스턴스의 Name 태그 값(EC2 스택이 붙인 값)
+    Default: aws-gap-check
+    AllowedPattern: "^[A-Za-z0-9._-]{1,64}$"
+  RetainCount:
+    Type: Number
+    Description: 남겨 둘 일일 스냅샷 수
+    Default: 7
+    MinValue: 1
+    MaxValue: 30
+
+Resources:
+  DlmRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: aws-gap-check DLM - create and delete EBS snapshots for the tagged instance
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: dlm.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole"
+
+  DailySnapshots:
+    Type: AWS::DLM::LifecyclePolicy
+    Properties:
+      Description: aws-gap-check daily snapshots
+      State: ENABLED
+      ExecutionRoleArn: !GetAtt DlmRole.Arn
+      PolicyDetails:
+        PolicyType: EBS_SNAPSHOT_MANAGEMENT
+        # 인스턴스 단위로 찍으면 볼륨에 태그가 없어도 되고, EC2 스택을 바꿀 필요가 없다
+        ResourceTypes: [INSTANCE]
+        TargetTags:
+          - { Key: Name, Value: !Ref InstanceNameTag }
+        Schedules:
+          - Name: daily
+            # 18:00 UTC = 03:00 KST(사용이 가장 적은 시간). 자동 점검은 05:33 UTC 무렵이다
+            CreateRule: { Interval: 24, IntervalUnit: HOURS, Times: ["18:00"] }
+            RetainRule: { Count: !Ref RetainCount }
+            CopyTags: true
+            TagsToAdd:
+              - { Key: app, Value: aws-gap-check }
+
+Outputs:
+  PolicyId:
+    Description: 확인 명령 aws dlm get-lifecycle-policy --policy-id <값>
+    Value: !Ref DailySnapshots
