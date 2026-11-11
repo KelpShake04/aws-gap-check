@@ -95,7 +95,7 @@ main에 push된 커밋의 `test` 워크플로가 성공하면 `deploy` 워크플
 
 - 자격 증명: GitHub OIDC로 `aws-gap-check-github-deploy` Role을 맡는다. 저장된 액세스 키가 없다. Role 신뢰 정책은 `repo:KelpShake04@128560649/aws-gap-check@1436024882:environment:production`만 받고(레포에 GitHub immutable subject가 켜져 있어 sub에 소유자·레포 ID가 들어간다. 이름이 같은 레포를 새로 만들어도 Role을 맡을 수 없다), GitHub environment `production`은 main 브랜치에서만 쓸 수 있다.
 - 권한: 그 인스턴스에 고정 SSM 문서 `agc-deploy` 하나만 실행(`ssm:SendCommand`) + 결과 조회. 문서 내용이 고정이라 워크플로가 탈취돼도 임의 명령은 보낼 수 없다.
-- 문서 동작: 잠금(배포 중복 방지) → `git fetch origin main` + `git merge --ff-only` → `docker compose build` → 진행 중 스캔(`DONE`·`FAILED`·`DELETED`가 아닌 것)이 끝날 때까지 최대 20분 기다림 → `docker compose up -d` → 앱 응답 확인. 스캔이 계속 진행 중이면 컨테이너를 바꾸지 않고 중단한다.
+- 문서 동작: 잠금(배포 중복 방지) → `git fetch origin main` + `git merge --ff-only` → `docker compose build` → 진행 중 스캔(`DONE`·`FAILED`·`DELETED`가 아닌 것)이 끝날 때까지 최대 20분 기다림 → DB 덤프(`/opt/agc-backup/`, 최근 7개) → `docker compose up -d` → 앱 응답 확인. 스캔이 계속 진행 중이면 컨테이너를 바꾸지 않고 중단한다.
 - 배포되는 커밋은 실행 시점의 `origin/main` 최신 커밋이다. 대기 중에 들어온 push도 함께 나간다.
 - 승인: environment `production`에 required reviewer(관리자)가 있어, Actions 화면에서 승인해야 배포가 시작된다. write 권한 팀원이 main에 push해도 관리자 승인 없이는 서버에 반영되지 않는다.
 - 처음 한 번 설정(관리자 권한, 서울 리전):
@@ -109,6 +109,26 @@ main에 push된 커밋의 `test` 워크플로가 성공하면 `deploy` 워크플
   ```
   `AWS_DEPLOY_ROLE_ARN` 변수가 없으면 배포 job은 건너뛴다. 계정에 GitHub OIDC provider가 이미 있으면 `CreateOidcProvider=false`를 더한다.
 - 수동 실행: Actions → deploy → Run workflow(main).
+
+## 백업과 복원
+
+- **일일 스냅샷**: `infra/backup.yaml`(별도 스택, EC2 스택은 건드리지 않음)이 Data Lifecycle Manager로 `Name=aws-gap-check` 인스턴스의 볼륨을 매일 03:00 KST에 찍고 7개를 남긴다. 루트 볼륨이 `DeleteOnTermination`이고 MySQL 데이터가 그 안(Docker 볼륨 `aws-gap-check_mysql-data`)에 있어서, 인스턴스가 교체·삭제될 때를 대비한다.
+  ```bash
+  aws cloudformation deploy --region ap-northeast-2 --stack-name aws-gap-check-backup \
+    --template-file infra/backup.yaml --capabilities CAPABILITY_IAM
+  aws ec2 describe-snapshots --region ap-northeast-2 --owner-ids self --filters Name=tag:app,Values=aws-gap-check \
+    --query "Snapshots[].[StartTime,VolumeSize,State]" --output table   # 다음 날 확인
+  ```
+- **배포 전 덤프**: `agc-deploy` 문서가 컨테이너를 바꾸기 직전 `/opt/agc-backup/gapcheck-<UTC 시각>.sql.gz`를 남긴다(같은 디스크라 인스턴스 삭제는 못 막고, 잘못된 배포·데이터 실수용).
+- **덤프로 되돌리기** (Session Manager, root):
+  ```bash
+  cd /opt/aws-gap-check
+  docker compose stop app
+  gunzip -c /opt/agc-backup/gapcheck-<시각>.sql.gz | docker compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" gapcheck'
+  docker compose start app
+  ```
+  덤프에는 `DROP TABLE IF EXISTS`가 들어 있어 지금 데이터를 덮어쓴다.
+- **스냅샷으로 되살리기** (인스턴스를 잃었을 때): 새 EC2 스택을 만들고 → 스냅샷에서 같은 AZ에 볼륨 생성 → 새 인스턴스에 두 번째 디스크로 연결·마운트 → `docker compose stop` → 옛 디스크의 `/var/lib/docker/volumes/aws-gap-check_mysql-data/_data`(DB)와 필요하면 `aws-gap-check_app-data/_data`(스캔 원본 결과, 30일 보존)를 새 위치에 복사(소유자 유지 `cp -a`) → 옛 `.env`의 `MYSQL_*` 값을 새 `.env`에 옮김 → `docker compose up -d`.
 
 ## 테스트
 
