@@ -63,7 +63,7 @@ MySQL 스키마를 바꾸면 `docker compose down -v`로 볼륨을 지워야 새
 
 ## 실제 스캔 (로컬 PC, EC2 없이)
 
-2026-10-29 서비스 계정 자신을 고객 계정으로 연결해 확인했다(당시 핵심 점검 50개, 약 75초. 지금은 33개로 약 60~75초).
+2026-10-29 서비스 계정 자신을 고객 계정으로 연결해 확인했다(당시 핵심 점검 50개, 약 75초. 이후 33개로 약 60~75초, 2026-11-11부터 42개).
 
 1. 관리자(콘솔 로그인 CLI 세션)로 `infra/local-app-role.yaml`을 스택 `aws-gap-check-local-app-role`로 배포한다.
 2. 앱 Role만 맡을 수 있는 IAM 사용자(예: `aws-gap-check-local`, 정책 `sts:AssumeRole` on `aws-gap-check-app-role`)와 액세스 키를 만들어 프로필(`agc-local`)에 저장한다. root는 AssumeRole을 못 해서 필요하다.
