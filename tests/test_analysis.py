@@ -303,6 +303,16 @@ class ExplainTest(unittest.TestCase):
         explainer.explain(self.groups[1])
         self.assertAlmostEqual(self.sleeps[0], 0.8)
 
+    def test_pacer_shared_between_explainers(self):
+        # 스캔 작업자 두 개가 Pacer 하나를 쓰면 호출 간격(60/max_rpm초)이 합계로 지켜진다
+        pacer = explain.Pacer(10, clock=lambda: sum(self.sleeps), sleep=self.sleeps.append)
+        first = explain.Explainer(Recorder(), None, model="m", pacer=pacer)
+        second = explain.Explainer(Recorder(), None, model="m", pacer=pacer)
+        for explainer, group in ((first, self.groups[0]), (second, self.groups[1]),
+                                 (first, self.groups[0]), (second, self.groups[1])):
+            explainer.explain(group)
+        self.assertEqual(self.sleeps, [6.0, 6.0, 6.0])
+
 
 if __name__ == "__main__":
     unittest.main()

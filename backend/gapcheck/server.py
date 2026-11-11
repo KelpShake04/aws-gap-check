@@ -196,7 +196,10 @@ def get_scan(call):
         for group in groups:
             if group["explainSource"] == "pending":
                 group["explanation"], group["explainSource"] = explain.fallback_explanation(group), "prowler"
-    return 200, {"scan": scan_view(scan), "findings": [finding_view(g) for g in groups],
+    view = scan_view(scan)
+    if scan["status"] == "QUEUED":
+        view["queuePosition"] = call.deps.store.queue_position(scan["id"])
+    return 200, {"scan": view, "findings": [finding_view(g) for g in groups],
                  "ismsPCovered": isms_p_covered()}
 
 

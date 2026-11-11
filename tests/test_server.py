@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 if not hasattr(hashlib, "scrypt"):
     raise unittest.SkipTest("hashlib.scrypt 없음(LibreSSL 빌드): 앱 이미지 안에서 실행하세요")
@@ -188,6 +189,21 @@ class ServerTest(unittest.TestCase):
         status, body = client.request("POST", "/api/scans", {"connectionId": conn["id"]})
         self.assertEqual(status, 202)
         return body["scan"]["id"]
+
+    def test_queue_position_only_while_queued(self):
+        bob, _ = self.user("bob@example.com")
+        self.done_scan(bob)  # bob이 먼저 줄을 선다
+        self.clock.value += timedelta(seconds=1)  # 스캔 ID는 시각으로 시작해 순서가 정해진다
+        alice, _ = self.user()
+        scan_id = self.done_scan(alice)
+        status, body = alice.request("GET", f"/api/scans/{scan_id}")
+        self.assertEqual((status, body["scan"]["status"], body["scan"]["queuePosition"]), (200, "QUEUED", 1))
+        self.assertNotIn("bob", json.dumps(body))  # 앞 사람의 정보는 숫자 말고 내보내지 않는다
+        while self.worker.run_once():
+            pass
+        body = alice.request("GET", f"/api/scans/{scan_id}")[1]
+        self.assertEqual(body["scan"]["status"], "DONE")
+        self.assertNotIn("queuePosition", body["scan"])
 
     def test_failed_scan_shows_prowler_text_instead_of_pending(self):
         alice, user = self.user()
@@ -440,6 +456,77 @@ class WorkerTest(unittest.TestCase):
         w.cleanup()
         self.assertFalse(raw.exists())
         self.assertIsNone(self.store.get_scan(self.sub, scan["id"]))
+
+    def test_two_threads_scan_two_users_at_once(self):
+        scan_a, _ = self.queued()
+        bob, _ = auth.create_user(self.store, "bob@example.com", self.clock())
+        self.sub, alice = bob["id"], self.sub
+        scan_b, _ = self.queued()
+        both_running = threading.Barrier(2, timeout=10)
+
+        def scanner(inputs, out_dir):
+            both_running.wait()  # 한 스레드만 돌면 여기서 시간 초과로 BrokenBarrierError
+            (out_dir / worker.RESULT_NAME).write_text("[]")
+
+        w = self.make_worker(scanner)
+
+        def drain():  # loop처럼 큐가 빌 때까지 꺼낸다(같은 스캔을 집어 claim에 지면 다음 것을 꺼냄)
+            while w.run_once():
+                pass
+        threads = [threading.Thread(target=drain) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(15)
+        self.assertEqual(self.store.get_scan(alice, scan_a["id"])["status"], "DONE")
+        self.assertEqual(self.store.get_scan(bob["id"], scan_b["id"])["status"], "DONE")
+
+    def test_same_scan_is_processed_once(self):
+        scan, _ = self.queued()
+        calls = []
+        started = threading.Barrier(2, timeout=10)
+
+        def scanner(inputs, out_dir):
+            calls.append(inputs["SCAN_ID"])
+            (out_dir / worker.RESULT_NAME).write_text("[]")
+
+        w = self.make_worker(scanner)
+
+        def race():
+            started.wait()
+            w.process(self.sub, scan)
+        threads = [threading.Thread(target=race) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(15)
+        self.assertEqual(calls, [scan["id"]])
+
+    def test_extra_threads_wait_until_recover_done(self):
+        w = self.make_worker(None)
+        calls = []
+
+        def run_once():
+            calls.append(1)
+            raise SystemExit  # 스레드를 끝낸다(loop는 Exception만 잡는다)
+        w.run_once = run_once
+        t = threading.Thread(target=w.loop, kwargs={"housekeeping": False}, daemon=True)
+        t.start()
+        t.join(0.3)
+        self.assertEqual(calls, [])  # recover 전에는 스캔을 잡지 않는다
+        w.recovered.set()
+        t.join(5)
+        self.assertEqual(calls, [1])
+
+    def test_only_first_thread_does_housekeeping(self):
+        # 복구·정리·자동 점검을 두 스레드가 하면 자동 점검 스캔이 중복으로 생길 수 있다
+        w = self.make_worker(None)
+        with mock.patch.object(worker.threading, "Thread") as thread:
+            w.start(threads=2)
+        self.assertEqual([c.kwargs for c in thread.call_args_list], [
+            {"target": w.loop, "kwargs": {"housekeeping": True}, "name": "scan-worker-1", "daemon": True},
+            {"target": w.loop, "kwargs": {"housekeeping": False}, "name": "scan-worker-2", "daemon": True}])
+        self.assertEqual(thread.return_value.start.call_count, 2)
 
     def test_raw_path_rejects_bad_ids(self):
         w = self.make_worker(None)

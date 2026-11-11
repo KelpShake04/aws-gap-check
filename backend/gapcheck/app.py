@@ -104,6 +104,7 @@ def explainer_factory(env, store, ssm_client):
     fallback_model = env.get("GEMINI_FALLBACK_MODEL", "")
     max_rpm = int(env.get("GEMINI_MAX_RPM", "10"))
     api_key = gemini_key_loader(env, ssm_client)
+    pacer = explain.Pacer(max_rpm)  # 작업자 스레드가 여러 개여도 Gemini 호출 속도는 합계로 제한한다
 
     def make_explainer():
         key = api_key() if model else ""
@@ -115,7 +116,7 @@ def explainer_factory(env, store, ssm_client):
                 def fallback_generate(system, user, schema):
                     return llm.generate_json(system, user, schema, model=fallback_model, api_key=key)
         return explain.Explainer(generate, store, fallback_generate=fallback_generate,
-                                 model=model, fallback_model=fallback_model, max_rpm=max_rpm)
+                                 model=model, fallback_model=fallback_model, max_rpm=max_rpm, pacer=pacer)
 
     return make_explainer
 
@@ -184,7 +185,7 @@ def main(env=os.environ) -> None:
     notifier = notify.Notifier(store, mailer, env.get("SITE_URL", "")) if mailer else None
     scan_worker = worker.Worker(store, scanner, make_explainer, data_dir / "raw", notifier=notifier,
                                 daily_limit=daily_limit)
-    scan_worker.start()
+    scan_worker.start(int(env.get("SCAN_WORKERS", "1")))
 
     app_dir = pathlib.Path(__file__).resolve().parent.parent
     deps = server.Deps(store=store, sts=sts, worker=scan_worker, service_account_id=service_account_id,

@@ -175,6 +175,11 @@ class Store:
                              "ORDER BY id LIMIT 1", ())
         return (rows[0]["user_id"], _from_row(SCAN, rows[0])) if rows else None
 
+    def queue_position(self, scan_id: str) -> int:
+        """이 스캔보다 먼저 대기 중인 스캔 수(다른 사용자 것 포함, 숫자만)."""
+        rows = self._execute("SELECT COUNT(*) AS n FROM scans WHERE status = 'QUEUED' AND id < %s", (scan_id,))
+        return rows[0]["n"]
+
     def fail_scans(self, statuses: tuple, fields: dict) -> int:
         """서버가 재시작돼 중단된 스캔을 한꺼번에 실패로 바꾼다."""
         marks = ", ".join(["%s"] * len(statuses))

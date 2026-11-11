@@ -704,7 +704,10 @@ async function reportView(id, filterSeverity = "", filterPart = "", filterIsms =
     h("h1", {}, "스캔 결과 ", h("span", { class: "muted" }, scan.accountId || "")),
     h("p", {}, badge(scan.status), " ", fmt(scan.createdAt),
       scan.error ? h("span", { class: "error-text" }, " ", scan.error) : null),
-    running ? h("p", { class: "muted" }, "진행 중입니다. 화면이 자동으로 새로 고쳐집니다.") : null,
+    running ? h("p", { class: "muted" },
+      scan.status === "QUEUED" && Number.isInteger(scan.queuePosition)
+        ? (scan.queuePosition ? `앞에 ${scan.queuePosition}건이 기다리고 있습니다. ` : "곧 시작합니다. ") : "",
+      "진행 중입니다. 화면이 자동으로 새로 고쳐집니다.") : null,
     countsView(scan.id, scan.counts, filterSeverity),
     findings.length ? frequentPartsView(scan.id, findings, filterPart) : null,
     findings.length ? ismsView(scan.id, findings, ismsPCovered, filterIsms) : null,
