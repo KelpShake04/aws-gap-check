@@ -1,7 +1,7 @@
 # 앱 이미지: Prowler 공식 이미지(버전 고정) 위에 앱 코드만 얹는다. Prowler와 boto3는 그 이미지의 venv에 있다.
 
 # 1단계: Prowler 이미지에는 pip가 없어서, PyMySQL만 해시를 확인해 따로 받아 둔다
-FROM python:3.12-slim AS deps
+FROM python:3.15-slim AS deps
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --require-hashes --no-deps --target /vendor -r /tmp/requirements.txt
 
