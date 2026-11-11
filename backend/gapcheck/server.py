@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from . import agent, auth, connections, llm, scans
+from . import agent, auth, connections, explain, llm, scans
 from .common import ApiError, BadRequest, Forbidden, TooMany, Unauthorized, Unavailable, utcnow
 from .views import TEMPLATE_PATH, conn_view, finding_view, isms_p_covered, scan_view, setup_info
 
@@ -191,6 +191,11 @@ def get_scan(call):
     sub = call.user["id"]
     scan = scans.get(call.deps.store, sub, call.args[0])
     groups = call.deps.store.list_findings(sub, scan["id"])
+    if scan["status"] == "FAILED":
+        # 해설 도중 실패하면 항목이 pending으로 남는다. 화면이 계속 기다리지 않게 Prowler 원문으로 보여 준다
+        for group in groups:
+            if group["explainSource"] == "pending":
+                group["explanation"], group["explainSource"] = explain.fallback_explanation(group), "prowler"
     return 200, {"scan": scan_view(scan), "findings": [finding_view(g) for g in groups],
                  "ismsPCovered": isms_p_covered()}
 

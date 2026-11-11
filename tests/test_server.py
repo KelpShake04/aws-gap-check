@@ -189,6 +189,25 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(status, 202)
         return body["scan"]["id"]
 
+    def test_failed_scan_shows_prowler_text_instead_of_pending(self):
+        alice, user = self.user()
+        scan_id = self.done_scan(alice)
+        sub = user["id"]
+
+        class Broken:
+            def explain(self, group):
+                raise RuntimeError("explain crashed")
+        self.worker.make_explainer = Broken
+        self.assertTrue(self.worker.run_once())  # 항목을 pending으로 저장한 뒤 해설에서 실패
+        self.assertTrue(any(g["explainSource"] == "pending" for g in self.store.list_findings(sub, scan_id)))
+
+        status, body = alice.request("GET", f"/api/scans/{scan_id}")
+        self.assertEqual((status, body["scan"]["status"]), (200, "FAILED"))
+        self.assertTrue(body["findings"])
+        for finding in body["findings"]:
+            self.assertEqual(finding["explainSource"], "prowler")
+            self.assertTrue(finding["explanation"]["summary"])
+
     # ---------- AI 상담 ----------
     def test_chat_requires_done_scan_owner_and_limits(self):
         alice, _ = self.user()
