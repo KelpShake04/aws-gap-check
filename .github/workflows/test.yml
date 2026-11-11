@@ -36,7 +36,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       # 앱의 유일한 추가 의존성(PyMySQL)만 해시를 확인해 설치한다
