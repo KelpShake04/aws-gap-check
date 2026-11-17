@@ -29,7 +29,7 @@ jobs:
       id-token: write
     # 배포는 하나씩. 진행 중인 배포를 취소하지 않는다
     concurrency:
-      group: deploy-production
+      group: deploy-production-v2  # 11-11 취소된 run이 이전 그룹 잠금을 쥔 채 남아 job이 pending에서 멈춤
       cancel-in-progress: false
     env:
       AWS_REGION: ap-northeast-2
