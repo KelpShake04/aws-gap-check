@@ -1,4 +1,4 @@
-# 인수인계 (2026-11-11 기준)
+# 인수인계 (2026-11-12 기준)
 
 ## 한 줄 요약
 AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국어로 위험·영향·조치를 해설하고, 계정 비용을 보여 주며, 주기적으로 점검해 새 위험 항목을 이메일로 알리는 웹 서비스. 팀 5명(2조), 개발은 사용자 1명이 전담. 발표 12/1.
@@ -22,8 +22,11 @@ AWS 계정을 연결하면 Prowler로 빈틈을 점검하고, Gemini가 한국�
 ## 2026-11-11 변경 (요약)
 - **CD 첫 자동 배포 성공**: 레포가 GitHub OIDC immutable subject를 써서 trust `sub`가 `repo:KelpShake04@128560649/aws-gap-check@1436024882:environment:production` 형식이다(PR #41, 스택 `aws-gap-check-github-deploy` 갱신 시 `GitHubRepo`를 이 값으로). SSM 문서 이름은 `aws` 접두어가 예약어라 `agc-deploy`. 원격 브랜치는 main만 남기고 정리.
 - 운영 AI 상담 실호출 확인(도구 루프·`thoughtSignature` 정상). ISMS-P 질문에 도구 없이 답해 항목 이름을 지어내는 문제 → PR #42.
-- **병합 대기 PR (이 순서로)**: #42 첫 걸음 도구 호출 강제 → #43 FAILED 스캔의 pending 항목 무한 새로고침 수정 → #44 core check 33→42, ISMS-P 대응 14→24 → #45 `infra/backup.yaml`(DLM 일일 스냅샷 7개, 별도 스택) + 배포 전 `mysqldump`(`/opt/agc-backup`) + `uptime.yml` → #46 `SCAN_WORKERS`(기본 1) + Gemini `Pacer` 공유 + `queuePosition`(#43 병합 후 rebase 필요) → #47 Gemini 호출 메타데이터 로그 + `scripts/agent_eval.py` → #48 구성도·Dependabot(이 문서 포함, 맨 마지막).
-- 병합 후 할 일(관리자):
+- **main 병합 완료(2026-11-11, 테스트 206 통과)**: #42 첫 걸음 도구 호출 강제, #43 FAILED 스캔의 pending 항목 무한 새로고침 수정, #44 core check 33→42·ISMS-P 대응 14→24, #45 `infra/backup.yaml`(DLM 일일 스냅샷 7개, 별도 스택) + 배포 전 `mysqldump`(`/opt/agc-backup`) + `uptime.yml`, #46 `SCAN_WORKERS`(기본 1) + Gemini `Pacer` 공유 + `queuePosition`, #47 Gemini 호출 메타데이터 로그 + `scripts/agent_eval.py`, #48 구성도·Dependabot.
+- **운영 반영 대기**: Actions `deploy` run 42980011228이 production 승인 대기(2026-11-12 기준). 승인 전 사이트는 #41 시점 코드.
+- Dependabot PR #49~#53(mysql 8.4.13, python 3.15-slim, caddy 2.11, setup-python 7, checkout 7)은 검토 대기. python 메이저 업은 로컬 테스트 후 병합.
+- 할 일(관리자):
+  0. 위 `deploy` 승인 후 사이트·AI 상담 확인(탭 새로고침).
   1. `aws cloudformation deploy --region ap-northeast-2 --stack-name aws-gap-check-backup --template-file infra/backup.yaml --capabilities CAPABILITY_IAM`, 그리고 `aws-gap-check-github-deploy` 스택 갱신(배포 전 덤프 반영).
   2. 운영 스캔 1건: 새 check 9개가 AccessDenied 없이 도는지, 스캔 시간, 앱 컨테이너 `memory.peak`. 여유 있으면 `.env`에 `SCAN_WORKERS=2`.
   3. `scripts/agent_eval.py`를 앱 컨테이너에서 실행(실행법은 파일 머리말), 결과를 시연 장표에.
